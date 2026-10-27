@@ -14,7 +14,7 @@
 - [x] Set the default only for new configurations with no explicit Codex option; retain config conflict behavior. Keep comment-only test fixtures explicitly opted out.
 - [x] Update the distributed Skill, setup workflow and installation examples to require local bridge readiness and actual UI/API verification. Keep shared/offline and user opt-outs explicit; use plain user-facing progress.
 - [x] Run the independent unittest suite and relevant browser checks. Package rc.5; exercise fresh installed defaults, real read-only doctor, actual toolbar/bridge API and screenshot/comment preservation with synthetic data. No real model task.
-- [ ] Review the scoped change, commit/push, publish a versioned GitHub release, download that release and install its global Skill using the standard installer. Verify package identity and global routing; leave existing projects untouched.
+- [x] Review the scoped change, commit/push, publish a versioned GitHub release, download that release and install its global Skill using the standard installer. Verify package identity and global routing; leave existing projects untouched.
 
 ## Review focus
 
@@ -23,3 +23,7 @@
 - Missing CLI/auth must be reported, not silently treated as a complete bridge.
 - Default service exposes the bridge API without starting a model job.
 - Release installation must contain the same Skill/runtime as teammates receive; never hot-edit an installed release.
+
+## Publication result
+
+Published `v0.1.0-rc.5` at source commit `105d0b55eb192e2bb5cc6a12927e19122b111ec6`. Downloaded GitHub archive SHA-256 `6cf3dda5e054c845e283faf9414ab7607c8b9474801e17c12200ba2c4bb1dc19` matches the tested package. All 31 installed files match that archive. Global discovery points directly at the installed rc.5 Skill; actual global-helper checks confirm local default enabled and explicit opt-out respected, with no job dispatched. Consumer projects were not changed.
