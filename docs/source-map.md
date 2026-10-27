@@ -1,0 +1,51 @@
+# Extraction source map
+
+Baseline captured 2026-10-27 from the **current working tree**, not Git HEAD, of `morsea-prototype`. Source HEAD was `9ce898fa7178befa4ac830cdbd1577255981a971`; the working tree was dirty and was not committed or changed by extraction. No business component, production review record, screenshot or asset is required by this repository's tests.
+
+Recovery evidence is external, private and limited to this extraction's recovery: `/Users/charles/Documents/codex-backups/web-review-kit-20261027T152615`. It contains the full review-data directory, runtime/support/deploy snapshot, protected SHA-256 manifests, Git status and read-only service/job observations. It must not be published or automatically replayed over current data.
+
+## File provenance
+
+Hashes below are the source file SHA-256 at extraction. Runtime, dependency/license, merge tool, protocol fixture, service/task tests and browser support are byte-identical; adapted browser tests and paths are indicated.
+
+| Source relative to Morsea | Destination | Adaptation | Source SHA-256 |
+| --- | --- | --- | --- |
+| `tools/review/server.py` | `runtime/server.py` | Unchanged runtime | `4eb0f21b50860d4a5f14b81a5ba5b98087c486f760070f21e71aea0b7a801a3a` |
+| `tools/review/codex_tasks.py` | `runtime/codex_tasks.py` | Unchanged runtime | `ba5db752ba3a498531dc3f9c4e80d4d6f2795bfedcd304e0b9e982aa5de51dd0` |
+| `tools/review/codex_session.py` | `runtime/codex_session.py` | Unchanged runtime | `2481e9c550d0780a7fa9ee444818b92921491263fdffd8da3e0a669005e2047f` |
+| `tools/review/review.js` | `runtime/review.js` | Unchanged runtime | `0d8ce7cb756517c80b411e4a9a9ab811215d67f41be84ec19b889373ffa9bb8d` |
+| `tools/review/review.css` | `runtime/review.css` | Unchanged runtime | `81d92133eb3817ff9f0cdb744ff5422af3b939b9d17be0886a7194ff6c1e300d` |
+| `tools/review/html2canvas.min.js` | `runtime/html2canvas.min.js` | Unchanged runtime | `e13cf4fb0919313c321783fb67b51b18dd0e7e90d33ba9fc50706278f070d363` |
+| `tools/review/LICENSE.html2canvas-pro` | `runtime/LICENSE.html2canvas-pro` | Unchanged runtime | `934c3e7d2b010f3eef0b7fa06899b73e4b82c296f898490958bd5c42654c459c` |
+| `deploy/merge-review-data.py` | `runtime/merge_review_data.py` | Renamed file only | `c13da9dcb10006b51cc7ab96d54def38e75e0558b455c68bbea66a162ae36bd2` |
+| `tools/review/test_server.py` | `tests/test_server.py` | Unchanged | `3892b362a89f53f0bae19b71e2c9ffe0162868317ed2d30ef5a0b0b644ff5719` |
+| `tools/review/test_codex_tasks.py` | `tests/test_codex_tasks.py` | Unchanged | `ebc7be5a89001ef2dc97a57abd263a8b32eb3c084c30547dcf4a2a839a7a669d` |
+| `tools/review/test_merge_review_data.py` | `tests/test_merge_review_data.py` | Standalone path / unittest entrypoint | `a70eb879d71953e2bae5cf26dcfbd233863295a4567c6ec9ab64fcfdae087f1b` |
+| `tools/review/test_codex_browser.py` | `tests/test_codex_browser.py` | Standalone path / unittest entrypoint | `da5bb98d2ea794fe142cd4e266e232177aafab7ad0485159acff3bcaf1dc5b7c` |
+| `tools/review/codex_app_server_fixture.py` | `tests/codex_app_server_fixture.py` | Unchanged | `5fbc5b5c38e30421c2381a68ea92647be1c1318c223168416b6365e4d6940699` |
+| `tools/review/verify.rb` | `tests/browser/verify.rb` | Standalone resources; synthetic page equivalents | `9b8946fb82f4dbfbde88c9c2794e526cbbc4f573222f9b6d1897da9cd80b145d` |
+| `tools/review/verify-codex.rb` | `tests/browser/verify-codex.rb` | Artifact root only | `b7111a6beafdf58955a7f053e9825f310206e1561f91dfdbf07d1381e819c45d` |
+| `tools/review/verify-attachments.rb` | `tests/browser/verify-attachments.rb` | Standalone resources; synthetic page equivalents | `b0800637d5a322325efb68cc33c83c8e2933a7135614cc33df12bd7297984f7c` |
+| `tools/review/verify-shared.rb` | `tests/browser/verify-shared.rb` | Standalone resources; synthetic page equivalents | `13810edd386b149cb555597c43cd795185420d74a78701eb969d338702ca9b43` |
+| `tools/support/cdp.rb` | `tests/support/cdp.rb` | Unchanged support | `b962a609b3bc8df54af0e4b62535eae9d0247c5ef2e0f547aa1186bfd7b45263` |
+| `tools/support/browser.rb` | `tests/support/browser.rb` | Unchanged support | `3951f87d5020e71ff8f7e470c2a1ea41c0d45a029d899a21fc890d2617a34d03` |
+
+## Fixture separation
+
+`tests/support/fixture_site.rb` is new synthetic support. It creates independent HTML, a deterministic gradient SVG and genuine deterministic PNG review evidence entirely inside temporary directories. It copies only review runtime assets for offline checks.
+
+The source `tools/review/verify.rb` keeps its Morsea integration cases untouched. The standalone version replaces the source homepage settings/login and workbench regeneration/canvas/media scenarios with synthetic dialog isolation, pointer-drag isolation, negative-layer screenshot and transform-following cases. Generic element selection, parent/child, disabled buttons, links, region selection, text ranges, input protection, SVG, Esc, lost-response retry, persistence/status and offline checks remain. Region and text annotations are also saved to the independent service. This is not a claim of rerunning Morsea business regression.
+
+The attachments check retains its paste, pure-image, preview, cancel, retry, export, limits, mobile and offline coverage, using the independent offline page. Shared checks replace formal-data copying and business navigation with seeded synthetic comments/screenshots and generic links, preserving prefix, two-browser synchronization, attachments, stale-edit conflict and index alias coverage. Codex browser integration now exposes its original script as a unittest plus direct entrypoint and explicitly locates the standalone Ruby script; it still uses only the original protocol substitute.
+
+## Runtime and dependencies
+
+- Python 3.9.6, standard library only; inherited `removeprefix`/`removesuffix` require Python 3.9+. No new Python 3.10+ syntax.
+- Ruby 2.6.10, standard library only (CDP WebSocket client, PNG fixture uses `zlib`).
+- Google Chrome 156.0.8078.48 on macOS arm64; isolated headless browser profiles, optional `CHROME_BIN`.
+- html2canvas-pro **2.4.2**, fixed vendored build and MIT license copied unchanged. Its SHA-256 appears above. The inherited patch adds `node.ownerDocument.defaultView.getComputedStyle(node).isolation === 'isolate'` to the real stacking-context decision, preserving negative-z-index pseudo-element images over parent backgrounds. This check is exercised by the synthetic `.photo` fixture.
+- No install, network fetch, package manager, API key or real Codex account is needed for tests. GitHub identity/repository discovery was read only; no remote exists at this stage.
+
+## Deferred baseline limitations
+
+The inherited server `PROJECT` default still reflects its original `tools/review` nesting, and the legacy Codex prompt retains Morsea build/source instructions. Runtime hashes deliberately remain unchanged in Task 1. Use explicit `--root`/`--data` and the injectable APIs for this baseline; do not claim a portable real-task bridge before the configuration/bridge tasks. Existing global browser storage keys, service identity and concurrency behavior are likewise baseline contracts for later scoped tasks. User scope was narrowed to macOS formal acceptance only. Existing HTTPS shared behavior is checked locally; Linux installation/acceptance and server deployment are excluded from this round.
