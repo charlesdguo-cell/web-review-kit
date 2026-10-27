@@ -193,12 +193,11 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
             self.do_GET()
 
         def send_file(self, target):
-            body = target.read_bytes()
-            size = len(body)
+            size = target.stat().st_size
             content_type = mimetypes.guess_type(target)[0] or 'application/octet-stream'
             headers = {'Accept-Ranges': 'bytes'}
-            # Audio/video seeking needs byte ranges even when the media is buffered.
-            # Ignore unsupported/malformed ranges and validators we cannot match.
+            status, start, end = 200, 0, size - 1
+            # Parse ranges without loading the whole asset into memory.
             requested = self.headers.get('Range', '') if self.command == 'GET' and not self.headers.get('If-Range') else ''
             match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested.strip(), re.I)
             if match and any(match.groups()):
@@ -207,13 +206,37 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                     start = int(first) if first else max(0, size - int(last))
                     end = min(int(last), size - 1) if first and last else size - 1
                 except ValueError:
-                    return self.send(200, body, content_type, headers)
-                if start >= size or end < start:
-                    headers['Content-Range'] = f'bytes */{size}'
-                    return self.send(416, b'', content_type, headers)
-                headers['Content-Range'] = f'bytes {start}-{end}/{size}'
-                return self.send(206, body[start:end + 1], content_type, headers)
-            return self.send(200, body, content_type, headers)
+                    start, end = 0, size - 1
+                else:
+                    if start >= size or end < start:
+                        headers['Content-Range'] = f'bytes */{size}'
+                        return self.send(416, b'', content_type, headers)
+                    headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+                    status = 206
+            self.send_response(status)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(max(0, end - start + 1)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            if self.command == 'HEAD':
+                return
+            # A media request may be cancelled as soon as its metadata arrives.
+            # Keep per-request memory bounded, including large suffix ranges.
+            try:
+                with target.open('rb') as stream:
+                    stream.seek(start)
+                    remaining = max(0, end - start + 1)
+                    while remaining:
+                        chunk = stream.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         def allowed(self, write=False):
             expected = f'127.0.0.1:{self.server.server_port}'
