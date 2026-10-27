@@ -171,16 +171,18 @@ class CLITests(unittest.TestCase):
         self.assertEqual(health['root'], str(config.web_root))
         self.assertEqual(health['data'], str(config.data_dir))
         # Existing standalone make_server has its original exact health shape.
-        legacy = make_server(config.web_root, config.data_dir, 0)
+        legacy_data = (self.project / 'legacy-reviews').resolve()
+        legacy = make_server(config.web_root, legacy_data, 0)
         worker = threading.Thread(target=legacy.serve_forever, daemon=True)
         worker.start()
         self.servers.append((legacy, worker))
         with urlopen(f'http://127.0.0.1:{legacy.server_port}/__review/health') as response:
             self.assertEqual(json.load(response), {'service': 'prototype-review', 'root': str(config.web_root),
-                                                  'data': str(config.data_dir)})
+                                                  'data': str(legacy_data)})
         path = self.project / 'review.config.json'
         raw = json.loads(path.read_text())
         raw['server'].update(port=self.free_port(), basePath='/team', publicOrigins=['https://reviews.example.test'])
+        raw['dataDir'] = 'shared-reviews'
         path.write_text(json.dumps(raw))
         shared = load_project_config(self.project)
         self.start(shared)

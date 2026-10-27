@@ -18,6 +18,9 @@ from urllib.request import urlopen
 from typing import TYPE_CHECKING
 import webbrowser
 
+from data_lock import acquire_data_lock, DataLockError
+from data_version import inspect_data_version, require_writable_data, DataVersionError
+
 if TYPE_CHECKING:
     from project_config import ProjectConfig
 
@@ -33,6 +36,27 @@ class ReviewHTTPServer(ThreadingHTTPServer):
     # HTTP/2 proxies open many upstream connections together for page assets.
     # The default backlog of five can drop that burst before handlers start.
     request_queue_size = 128
+
+    def __init__(self, address, handler, data_dir):
+        self._data_lock = acquire_data_lock(data_dir)
+        self._data_lock.__enter__()
+        try:
+            inspect_data_version(data_dir)
+            super().__init__(address, handler)
+        except BaseException:
+            self._release_data_lock()
+            raise
+
+    def _release_data_lock(self):
+        owner, self._data_lock = self._data_lock, None
+        if owner is not None:
+            owner.__exit__(None, None, None)
+
+    def server_close(self):
+        try:
+            super().server_close()
+        finally:
+            self._release_data_lock()
 
 
 def attachment_image(data_url):
@@ -97,7 +121,8 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
     manifest = data / 'comments.json'
 
     def records():
-        return json.loads(manifest.read_text()) if manifest.exists() else []
+        inspect_data_version(data)
+        return json.loads(manifest.read_text(encoding='utf-8')) if manifest.exists() else []
 
     def build_id():
         digest = hashlib.sha256()
@@ -221,7 +246,11 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 path = path[len(base_path):]
             if path == '/__review/comments':
                 with lock:
-                    return self.send(200, {'comments': [self.public_record(c) for c in records()], 'storage': '服务器共享评审' if origins else str(manifest), 'build': build_id()})
+                    try:
+                        items = records()
+                    except DataVersionError as error:
+                        return self.send(409, {'error': str(error), 'code': error.code})
+                    return self.send(200, {'comments': [self.public_record(c) for c in items], 'storage': '服务器共享评审' if origins else str(manifest), 'build': build_id()})
             if path == '/__review/health':
                 if project_config is not None:
                     health = configured_health(project_config)
@@ -279,6 +308,9 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 if comment.get('status') not in ('open', 'changed', 'resolved'):
                     raise ValueError('评论状态无效')
                 with lock:
+                    require_writable_data(data, project_config.project_id if project_config is not None else None)
+                    if project_config is not None and payload.get('projectId', project_config.project_id) != project_config.project_id:
+                        raise DataVersionError('Review submission belongs to a different project')
                     items = records()
                     previous = next((c for c in items if c['id'] == comment['id']), None)
                     try:
@@ -326,6 +358,8 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                             os.replace(temporary, image_path)
                     atomic_json(manifest, items)
                     return self.send(200, {'comment': self.public_record(comment)})
+            except DataVersionError as error:
+                return self.send(409, {'error': str(error), 'code': error.code})
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
                 return self.send(400, {'error': str(error)})
             except OSError:
@@ -372,7 +406,7 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
             except OSError:
                 return self.send(500, {'error': '本机任务暂时无法启动，请查看服务日志。'})
 
-    return ReviewHTTPServer((bind_host, port), Handler)
+    return ReviewHTTPServer((bind_host, port), Handler, data)
 
 
 def configured_health(config):
@@ -406,8 +440,8 @@ def serve_project(config: 'ProjectConfig') -> None:
         server = make_server(config.web_root, config.data_dir, options['port'],
                              options['basePath'], options['publicOrigins'], options['host'],
                              tasks, project_config=config)
-    except OSError as error:
-        if error.errno != errno.EADDRINUSE:
+    except (OSError, DataLockError) as error:
+        if isinstance(error, OSError) and error.errno != errno.EADDRINUSE:
             raise
         try:
             with urlopen(url + '__review/health', timeout=2) as response:
@@ -419,7 +453,7 @@ def serve_project(config: 'ProjectConfig') -> None:
         if health and {k: v for k, v in health.items() if k != 'build'} == expected:
             print(json.dumps({**result, 'reused': True}, ensure_ascii=False), flush=True)
             return
-        raise ConfigError('Port is occupied by another service, project or configuration; choose a different port',
+        raise ConfigError('Data directory or port is owned by another service, project or configuration',
                           3, 'service_conflict')
     print(json.dumps({**result, 'reused': False}, ensure_ascii=False), flush=True)
     try:
@@ -452,8 +486,8 @@ def main():
         tasks = CodexTasks(PROJECT, args.data, PROJECT / 'artifacts/review-codex', str(args.codex_bin.resolve()) if args.codex_bin else None)
     try:
         server = make_server(args.root, args.data, args.port, args.base_path, args.public_origin, args.bind_host, tasks)
-    except OSError as error:
-        if error.errno != errno.EADDRINUSE:
+    except (OSError, DataLockError) as error:
+        if isinstance(error, OSError) and error.errno != errno.EADDRINUSE:
             raise
         url = f'http://127.0.0.1:{args.port}/'
         try:

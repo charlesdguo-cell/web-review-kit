@@ -239,7 +239,7 @@ class CodexTaskTests(unittest.TestCase):
     def test_disabled_or_shared_service_does_not_expose_launcher(self):
         with self.assertRaises(ValueError):
             make_server(self.pages, self.data, 0, public_origins=['https://review.example'], codex_tasks=self.tasks)
-        disabled = make_server(self.pages, self.data, 0)
+        disabled = make_server(self.pages, self.root / 'disabled-data', 0)
         worker = threading.Thread(target=disabled.serve_forever, daemon=True); worker.start()
         try:
             with self.assertRaises(HTTPError) as error:
