@@ -105,3 +105,7 @@ The detailed command results, real job/thread IDs, screenshot locations and serv
 Production/Linux deployment, public certificates, system trust installation, formal data migration, automatic upgrade/rollback, cross-root relocation and old-candidate compatibility sweeps are deferred. Existing advanced implementations remain experimental and are not first-release gates. Shared/offline review keeps Codex disabled. Ordinary installation, configuration and doctor checks do not mean a service or real task has run.
 
 The local TLS check is a temporary loopback proxy, not a production deployment or validation of a team's actual proxy configuration. The real workflow uses one small synthetic batch and one explanation follow-up; it does not establish reliability for arbitrary large tasks, cancellation during every tool phase or all model/provider combinations. The original runtime can log a BrokenPipeError when a browser aborts media delivery; no runtime logging changes were made for acceptance.
+
+## 2026-10-28 scoped deployment follow-up
+
+The original acceptance boundaries above remain historical. The separately authorized rc.7 release now includes bounded media streaming and was verified in Morsea’s actual team container and HTTPS configuration. See [rc.7 release evidence](release-notes/2026-10-28-rc7.md); this does not expand the generic installer/platform acceptance claim.
