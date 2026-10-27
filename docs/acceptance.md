@@ -1,5 +1,13 @@
 # Core acceptance · 2026-10-27
 
+## rc.6 headless verification default · 2026-10-27
+
+`0.1.0-rc.6` specifies headless automation in the distributed Skill, setup/comment workflows and both configured/legacy worker prompts. A different runner must verify its effective mode, including reused sessions. Visible windows are for explicit user viewing or assisted interactive steps such as login. Checks save evidence, close only their own browser sessions/temporary servers, and retain formal review services and existing user windows. Browser launch implementation and real job handling are unchanged.
+
+Verification: **145 unittest tests OK in 83.403s**, isolated original browser suite **29 passed**, Skill YAML validated, and one scoped read-only review checked automation, retained headed sessions, explicit viewing, assisted login and cleanup ownership. A clean package installation exercised the existing default Codex bridge, real read-only CLI handshake/auth, browser toolbar and saved comment/screenshot. The running verification browser was explicitly inspected for `--headless=new` and checked to have exited after cleanup. Offline HTML bytes were preserved, and no model job was dispatched. Results are in ignored `artifacts/releases/0.1.0-rc.6/`.
+
+No running consumer task, consumer pin, formal review service or existing user browser session was changed. This release applies when the new component version is selected; it does not rewrite already-running tasks or immutable older installations.
+
 ## rc.5 default local bridge correction · 2026-10-27
 
 `0.1.0-rc.5` corrects new local setup to enable Codex bridging by default. Shared server settings still default off, explicit `--no-codex` remains off, and repeat setup preserves existing project settings. Skill/setup/release instructions now require consumer guidance, actual executable discovery, doctor readiness, matching bridge health/API and the visible Codex control before reporting complete local delivery. Progress guidance focuses on the user's comment and result.

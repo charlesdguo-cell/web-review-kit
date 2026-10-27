@@ -26,7 +26,9 @@ Before working on each item, fetch `show --id` from the same service and compare
 
 Inspect the related consumer interaction rules and source. Make the authorized incremental fix inside sourceRoots; preserve existing uncommitted work. When existing behavior already satisfies the request, verify it and record “已有实现，已复核”. Conflicting product requirements, missing source/build guidance or incomplete work stay open with a concrete reason. Broad product redesign, toolkit changes, commit/push/deploy are separate authorization scopes.
 
-Run the configured build commands and checks appropriate to the change. Use isolated Chrome profiles and temporary review data for browser checks. Distinguish targeted validation, full regression and user design acceptance. Record actual results and failures; no fabricated checks or blanket completion based on a process exit.
+Run the configured build commands and checks appropriate to the change. Browser automation defaults to **headless** with isolated profiles and temporary review data. Prefer the consumer's existing headless checks. When choosing another runner, verify the effective mode (including reused sessions/configuration); do not add `--headed` or open temporary test URLs in the system browser for automatic checks. A visible browser is appropriate when the user explicitly requests to see the page or must perform an interactive step such as login. Save logs/screenshots and other evidence, then close only the sessions and temporary test servers created for this check. Keep the formal review service and the user's existing windows running.
+
+Distinguish targeted validation, full regression and user design acceptance. Record actual results and failures; no fabricated checks or blanket completion based on a process exit.
 
 ## Reliable writeback and readback
 

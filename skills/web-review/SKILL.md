@@ -13,6 +13,8 @@ For an HTML deliverable, read the consumer's instructions, use its existing revi
 
 Describe progress through the comment being handled, the problem found and the actual result. Keep tool-version and workflow mechanics for troubleshooting when relevant.
 
+Run automated browser checks headlessly, using isolated profiles and temporary review data. Prefer the project's existing headless check entrypoints; verify effective headless mode when choosing another tool. Visible browsers are for explicit user viewing requests or user-assisted steps such as login. Save evidence, then close only the browser sessions and temporary test servers created for the check; retain the user's review service and existing windows.
+
 An already dispatched worker follows only its frozen batch and executionConfig; HTML delivery defaults do not expand that task.
 
 | Entry | Observable input | Read next |

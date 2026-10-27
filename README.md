@@ -61,6 +61,8 @@ The existing stopped-service import utility is retained for separately authorize
 
 Python 3.9+, Ruby standard library and Google Chrome are required. Set `CHROME_BIN` if needed. Tests use synthetic data, isolated browser profiles and protocol substitutes; they never launch the real Codex executable. Generated artifacts are ignored.
 
+Automated browser verification uses headless mode by default, including a different runner chosen by an agent. Visible windows are used for explicit viewing requests or user-assisted steps such as login. Preserve evidence and close only the check's own sessions/temporary servers afterward; retain the user's review service and existing browser windows.
+
 ```sh
 PYTHONPATH=runtime python3 -m unittest discover -s tests -p 'test_*.py'
 ruby tests/browser/verify.rb

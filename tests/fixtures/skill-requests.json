@@ -109,5 +109,34 @@
       "working comment toolbar",
       "no bridge or model task activated"
     ]
+  },
+  {
+    "scenario": "automatic-ui-check-is-headless",
+    "request": "处理指定评论并验证修改后的页面，我会继续使用当前评审网页。",
+    "resources": [
+      "frozen worker request",
+      "consumer headless checks",
+      "temporary data"
+    ],
+    "expectedEntry": "existing-worker-consume-directly",
+    "completionEvidence": [
+      "headless verification browser",
+      "no headed launch for automated checks",
+      "evidence saved",
+      "only own temporary sessions and server cleaned up",
+      "formal review service and user windows retained"
+    ]
+  },
+  {
+    "scenario": "explicit-visible-page-request",
+    "request": "打开修改后的评审页面给我看看。",
+    "resources": [
+      "configured live review URL"
+    ],
+    "expectedEntry": "user-requested-visible-page",
+    "completionEvidence": [
+      "user-requested visible page",
+      "formal review service retained"
+    ]
   }
 ]
