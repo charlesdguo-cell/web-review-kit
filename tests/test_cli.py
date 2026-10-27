@@ -87,6 +87,28 @@ class CLITests(unittest.TestCase):
         self.assertIn('server.port', result['diff'])
         self.assertEqual(path.read_bytes(), before)
 
+    def test_setup_distinguishes_path_lookup_and_explicit_executable(self):
+        path = self.project / 'review.config.json'
+        for existing, requested in [('codex', './codex'), ('./codex', 'codex')]:
+            with self.subTest(existing=existing, requested=requested):
+                if path.exists():
+                    path.unlink()
+                self.assertEqual(self.setup('--codex-bin', existing)[0], 0)
+                before = path.read_bytes()
+                code, result = self.setup('--codex-bin', requested)
+                self.assertEqual(code, 3)
+                self.assertEqual(result['error'], 'configuration_conflict')
+                self.assertEqual(result['diff']['codex.executable'],
+                                 {'existing': existing, 'requested': requested})
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_setup_reuses_equivalent_explicit_executable_paths(self):
+        self.assertEqual(self.setup('--codex-bin', './bin/../codex')[0], 0)
+        path = self.project / 'review.config.json'
+        before = path.read_bytes()
+        self.assertEqual(self.setup('--codex-bin', str(self.project / 'codex'))[0], 0)
+        self.assertEqual(path.read_bytes(), before)
+
     def test_unknown_version_and_invalid_cli_return_json_2(self):
         self.setup()
         path = self.project / 'review.config.json'

@@ -166,7 +166,7 @@ def setup_project(project_root: Path, options: dict):
         old = target.get(leaf)
         if key in ('webRoot', 'dataDir', 'jobsDir'):
             equal = old is not None and (root / old).resolve() == (root / value).resolve()
-        elif key == 'codex.executable' and old and ('/' in old or '/' in value):
+        elif key == 'codex.executable' and old and '/' in old and '/' in value:
             equal = (root / old).resolve() == (root / value).resolve()
         else:
             equal = old == value
