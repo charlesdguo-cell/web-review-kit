@@ -1,19 +1,26 @@
 ---
 name: web-review
-description: Use when connecting a static HTML project to Web Review Kit, handling specified webpage comments in the current conversation, or consuming an already dispatched worker's frozen request.json batch. Not for broad unauthorized product redesign.
+description: Use when creating or delivering an HTML report, static webpage, interactive prototype or demo for user review (HTML 报告、网页、原型、演示), connecting webpage comments, or handling review comments and frozen worker batches. Provide a review entry by default for HTML deliverables; respect explicit requests to skip comments.
 ---
 
 # Web Review
 
 Use the consumer project's pinned tool and accompanying workflow. Preserve original review evidence; technical completion is `changed`, while `resolved` requires user acceptance.
 
+For HTML reports, static webpages, interactive prototypes and demos delivered for the user to inspect, provide a working comment entry by default and keep the original artifact readable offline. Respect explicit requests to skip comments and project-specific delivery constraints. Code snippets and non-HTML documents do not require review setup. This default belongs to the distributed Skill; no personal AGENTS.md rule or source-checkout wrapper is required.
+
+For an HTML deliverable, read the consumer's instructions, use its existing review configuration or connect its actual HTML/build-output directory, and follow the project-setup workflow. Serve through the toolkit to inject the toolbar; keep standalone HTML/offline assets intact. Before delivery verify the HTTP page, matching project health and the actual toolbar, then return the review URL and offline file link. Installation or setup alone does not establish a working review entry. Preparing an entry does not process pending comments or enable an unrequested bridge.
+
+An already dispatched worker follows only its frozen batch and executionConfig; HTML delivery defaults do not expand that task.
+
 | Entry | Observable input | Read next |
 | --- | --- | --- |
+| Deliver HTML | HTML report, static webpage, prototype or demo for user inspection | Follow project setup using the existing pin, or this installed bundle for an unconfigured project |
 | Connect a project | User requests review setup, no frozen worker request | [project-setup](references/project-setup.md) |
 | Current conversation | User names comments to handle here | Locate the pinned release, then read its `commentWorkflow` |
 | Existing worker | Already dispatched with frozen comments/request.json | Locate with `--request`, then read its `commentWorkflow`; consume this batch directly |
 
-Installation/bootstrap and explicit project-local discovery commands are in the same release's [release guide](../../docs/releases.md). Install returns the verified absolute `installRoot`; keep it with the installation instructions. A discovered symlink remains attached to its complete `INSTALL/releases/VERSION` bundle, allowing the helper to derive that exact root with receipt verification. It never searches for a newest version. A configured packaged worker also receives `executionConfig.installRoot`, `skillPath` and the absolute frozen request path in its prompt.
+Installation/bootstrap and global or project-local discovery commands are in the same release's [release guide](../../docs/releases.md). Prefer the global discovery link for use across projects. Install returns the verified absolute `installRoot`; keep it with the installation instructions. A discovered symlink remains attached to its complete `INSTALL/releases/VERSION` bundle, allowing the helper to derive that exact root with receipt verification. It never searches for a newest version. A configured packaged worker also receives `executionConfig.installRoot`, `skillPath` and the absolute frozen request path in its prompt.
 
 For a configured project, run the bundled helper through Python (omit `--install-root` only when using the verified layout above):
 

@@ -1,5 +1,15 @@
 # Core acceptance · 2026-10-27
 
+## rc.4 distribution follow-up · 2026-10-27
+
+`0.1.0-rc.4` distributes the HTML report/page/prototype/demo delivery default inside the standard `web-review` Skill and documents global installation. Maintainers and teammates use the identical complete release; the temporary source-checkout wrapper and personal AGENTS.md delivery rule are no longer needed. Existing configured projects keep their pins and frozen tasks. All runtime files remain byte-identical to rc.3; no data/schema migration or real Codex task was run for this follow-up.
+
+Verification: complete unittest discovery **140 OK in 81.863s**, isolated original browser suite **29 passed**, and a clean isolated installation from the rc.4 archive with no personal AGENTS.md. The clean check verified repeat install, the global link to the complete release, a fresh rc.4 project, matching HTTP health, the actual toolbar, saved synthetic comment with original screenshot, and unchanged standalone HTML bytes. One read-only behavioral review checked HTML delivery, old project pins, snippets, explicit opt-out and frozen-worker routing.
+
+The first clean-check script used a synthetic input event without crossing the toolbar's shadow boundary. It timed out; the script was corrected to use real browser text input and passed. Runtime code was unchanged. Commands/results and screenshot are retained locally under `artifacts/releases/0.1.0-rc.4/`; no generated comment/evidence is included in Git or the package.
+
+The rc.3 acceptance below remains the original snapshot, rather than a claim that all existing consumers have been upgraded.
+
 The first-release gate is original comment and Codex parity plus reusable project configuration, Skill discovery and an exact private release installation. The candidate remains **0.1.0-rc.3**, source `9196c9477b3665cbe658c7df40c934854ffb61a2`. This acceptance work adds documentation and test harnesses; it does not change the 31 packaged files or publish a new candidate. User acceptance remains pending.
 
 ## Verified local combination
@@ -17,7 +27,9 @@ This table records a tested combination, not a promise about other machines, acc
 
 ## Independent review project
 
-`/Users/charles/Documents/codex/web-review-kit-validation` is a separate synthetic two-page Field Notes demo. It has its own AGENTS, README, review guidance, `src/`, built `public/`, `review-data/`, `.review/jobs/`, browser namespace and stable port. Text, SVG and the two-second WAV were generated locally. No Morsea business content, assets or comments were copied.
+Current workspace path below reflects the user-requested relocation on 2026-10-27. Acceptance results and comment statuses describe the original test snapshot; later user runs may change them. Comments, attachments and task history were retained. Completed-job request location fields were updated, with original requests and hash records kept under `~/.local/share/web-review-kit-acceptance-backups/validation-relocation-20261027T131320Z/`.
+
+`/Users/charles/.local/share/web-review-kit-validation` is a separate synthetic two-page Field Notes demo. It has its own AGENTS, README, review guidance, `src/`, built `public/`, `review-data/`, `.review/jobs/`, browser namespace and stable port. Text, SVG and the two-second WAV were generated locally. No Morsea business content, assets or comments were copied.
 
 Open **http://127.0.0.1:8791/** and follow its README's five-minute review. Check the title `Field collection`, eyebrow `Independent static project`, filter, detail navigation, modal and playable audio. Open the comment list to inspect #1's original screenshot and PNG attachment. It is `changed`; #2 was created during the first worker run and remains `open`. Do not accept these on the user's behalf.
 
@@ -57,13 +69,13 @@ These manual scripts are deliberately outside ordinary unittest discovery. `real
 
 ```sh
 # Only after setting up the independent blank synthetic project with the documented fixed pin:
-ALLOW_REAL_CODEX=1 VALIDATION_PROJECT=/Users/charles/Documents/codex/web-review-kit-validation ruby tests/acceptance/real_core.rb
+ALLOW_REAL_CODEX=1 VALIDATION_PROJECT=/Users/charles/.local/share/web-review-kit-validation ruby tests/acceptance/real_core.rb
 # Separate scratch shared project, self-signed certificate and proxy; cleans up its own processes/data:
-VALIDATION_PROJECT=/Users/charles/Documents/codex/web-review-kit-validation python3 tests/acceptance/shared_https.py
+VALIDATION_PROJECT=/Users/charles/.local/share/web-review-kit-validation python3 tests/acceptance/shared_https.py
 # Read-only retained-evidence verification; use the actual worker's saved external backup path:
-VALIDATION_PROJECT=/Users/charles/Documents/codex/web-review-kit-validation WORKER_EVIDENCE_BACKUP=/absolute/worker-backup python3 tests/acceptance/inspect_core.py
+VALIDATION_PROJECT=/Users/charles/.local/share/web-review-kit-validation WORKER_EVIDENCE_BACKUP=/absolute/worker-backup python3 tests/acceptance/inspect_core.py
 # Read-only retained UI and actual audio playback through a trusted pointer gesture:
-VALIDATION_PROJECT=/Users/charles/Documents/codex/web-review-kit-validation ruby tests/acceptance/retained_browser.rb
+VALIDATION_PROJECT=/Users/charles/.local/share/web-review-kit-validation ruby tests/acceptance/retained_browser.rb
 # Standard isolated fixture checks (never real inference):
 PYTHONPATH=runtime python3 -m unittest discover -s tests -p 'test_*.py'
 ruby tests/browser/verify.rb

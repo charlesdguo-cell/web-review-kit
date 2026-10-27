@@ -2,29 +2,37 @@
 
 The first release preserves existing review and Codex behavior while adding project configuration, a reusable Skill and a verified fixed-version installation. Validate it in Morsea and one independent static project; preserve original comments, evidence and task history. Formal data migration, production deployment, multi-platform support and advanced version management are outside this release's acceptance scope.
 
-Use Python 3.9+ on macOS and the single installation root **`/Users/charles/.local/share/web-review-kit`**. The next candidate is **`0.1.0-rc.3`**. VERSION alone does not mean it has been published; run the download commands only after candidate publication is recorded.
+Use Python 3.9+ on macOS and the single installation root **`~/.local/share/web-review-kit`**. The selected candidate is **`0.1.0-rc.4`**. VERSION alone does not mean it has been published; run the download commands only after candidate publication is recorded.
 
 ## Install the exact candidate
 
 The repository is private: `charlesdguo-cell/web-review-kit`. Download uses the host's existing `gh` login; credentials are never bundled.
 
 ```sh
-review_install=/Users/charles/.local/share/web-review-kit
+review_install="$HOME/.local/share/web-review-kit"
 review_bootstrap="$(mktemp -d)"
-gh release download v0.1.0-rc.3 --repo charlesdguo-cell/web-review-kit --pattern 'web-review-kit-0.1.0-rc.3.tar.gz*' --dir "$review_bootstrap"
-(cd "$review_bootstrap" && shasum -a 256 -c web-review-kit-0.1.0-rc.3.tar.gz.sha256)
-tar -xzf "$review_bootstrap/web-review-kit-0.1.0-rc.3.tar.gz" -C "$review_bootstrap"
-python3 "$review_bootstrap/scripts/install.py" --archive "$review_bootstrap/web-review-kit-0.1.0-rc.3.tar.gz" --install-root "$review_install"
+gh release download v0.1.0-rc.4 --repo charlesdguo-cell/web-review-kit --pattern 'web-review-kit-0.1.0-rc.4.tar.gz*' --dir "$review_bootstrap"
+(cd "$review_bootstrap" && shasum -a 256 -c web-review-kit-0.1.0-rc.4.tar.gz.sha256)
+tar -xzf "$review_bootstrap/web-review-kit-0.1.0-rc.4.tar.gz" -C "$review_bootstrap"
+python3 "$review_bootstrap/scripts/install.py" --archive "$review_bootstrap/web-review-kit-0.1.0-rc.4.tar.gz" --install-root "$review_install" --skill-link "$HOME/.agents/skills/web-review"
 ```
 
-Stop on any download or checksum failure. The installer returns absolute `installRoot`, `releaseRoot` and `skill` paths. Runtime, frontend assets and Skill live together under `releases/0.1.0-rc.3/`; a receipt records the manifest hash. Identical repeat installation is safe; local managed-file changes or conflicting content are rejected. Installation does not change project pins/data/jobs, start services, or modify global agent configuration.
+Stop on any download or checksum failure. The installer returns absolute `installRoot`, `releaseRoot` and `skill` paths. Runtime, frontend assets and Skill live together under `releases/0.1.0-rc.4/`; a receipt records the manifest hash. Identical repeat installation is safe; local managed-file changes or conflicting content are rejected. Installation does not change project pins/data/jobs, start services, or modify global agent configuration.
+
+## Global Skill
+
+The standard installation above creates `~/.agents/skills/web-review` pointing directly at `INSTALL/releases/0.1.0-rc.4/skills/web-review`. This exact packaged Skill is used by maintainers and teammates. It includes default review delivery for HTML reports, static webpages, prototypes and demos, while preserving offline reading and explicit opt-outs. No source checkout, custom wrapper or global AGENTS.md edit is required.
+
+For an already installed bundle, create the same link using `ln -s "$HOME/.local/share/web-review-kit/releases/0.1.0-rc.4/skills/web-review" "$HOME/.agents/skills/web-review"`. If a discovery path exists, inspect it first: the installer preserves conflicts. An old symlink may be removed after verifying that it points to the previous tool release, then the standard install can be repeated. Preserve an actual directory or unrelated Skill. Remove any previously added personal rule duplicating this Skill's HTML delivery default so the distributed Skill remains the common behavior source.
+
+Codex discovers Skills automatically; if this entry is missing, restart Codex. Verify the symlink target and use the packaged helper's `version` in a configured project. An older project pin remains older deliberately; global installation does not upgrade existing projects or rewrite frozen tasks.
 
 ## Configure and use a project
 
-For explicit project-local discovery, append `--skill-link /absolute/consumer/.agents/skills/web-review` to the installer command. Existing paths are preserved on conflict. Alternatively invoke the installed helper directly; keep the complete release layout rather than copying the Skill alone.
+A global Skill is sufficient for new projects. Project-local discovery remains optional for a team checkout: use `--skill-link /absolute/consumer/.agents/skills/web-review` instead of the global destination. Existing paths are preserved on conflict. Alternatively invoke the installed helper directly; keep the complete release layout rather than copying the Skill alone.
 
 ```sh
-review_release=/Users/charles/.local/share/web-review-kit/releases/0.1.0-rc.3
+review_release="$HOME/.local/share/web-review-kit/releases/0.1.0-rc.4"
 python3 "$review_release/web-review.py" --project /absolute/consumer setup --web-root public --no-codex
 python3 "$review_release/skills/web-review/scripts/review.py" --project /absolute/consumer locate
 python3 "$review_release/skills/web-review/scripts/review.py" --project /absolute/consumer version
@@ -40,7 +48,7 @@ Keep schema-v1 data in its existing directory. Ordinary installation, reads, doc
 Keep consumer-owned README and integration tests. After the authorized backup and preservation of the original launcher, link only `tools/review/server.py` to the packaged entry:
 
 ```sh
-ln -s /Users/charles/.local/share/web-review-kit/releases/0.1.0-rc.3/compat/server.py /absolute/consumer/tools/review/server.py
+ln -s "$HOME/.local/share/web-review-kit/releases/0.1.0-rc.4/compat/server.py" /absolute/consumer/tools/review/server.py
 python3 /absolute/consumer/tools/review/server.py --open --codex
 ```
 

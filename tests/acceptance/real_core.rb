@@ -3,7 +3,7 @@ require_relative '../support/browser'
 require 'net/http'
 require 'digest'
 root=File.expand_path(ENV.fetch('VALIDATION_PROJECT'))
-raise 'Only the independent validation workspace is authorized' unless root=='/Users/charles/Documents/codex/web-review-kit-validation'
+raise 'Only the independent validation workspace is authorized' unless root=='/Users/charles/.local/share/web-review-kit-validation'
 raise 'Real-worker opt-in required' unless ENV['ALLOW_REAL_CODEX']=='1'
 base='http://127.0.0.1:8791/'
 health=JSON.parse(Net::HTTP.get(URI(base+'__review/health')))

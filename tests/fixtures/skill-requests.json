@@ -2,22 +2,86 @@
   {
     "scenario": "connect-static-project",
     "request": "请把静态 HTML 项目 /tmp/example-review 接入网页评论，页面在 public/，先不要处理评论。",
-    "resources": ["project instructions", "static output directory"],
+    "resources": [
+      "project instructions",
+      "static output directory"
+    ],
     "expectedEntry": "project-setup",
-    "completionEvidence": ["project configuration", "explicit service state", "no comments processed"]
+    "completionEvidence": [
+      "project configuration",
+      "explicit service state",
+      "no comments processed"
+    ]
   },
   {
     "scenario": "current-conversation-after-host-upgrade",
     "request": "当前对话处理 comment-demo-2，原文和截图必须保留。项目固定旧版本，机器入口最近升级了。",
-    "resources": ["review.config.json", "installed pinned release", "live comment and original evidence"],
+    "resources": [
+      "review.config.json",
+      "installed pinned release",
+      "live comment and original evidence"
+    ],
     "expectedEntry": "pinned-comment-workflow",
-    "completionEvidence": ["matching runtime and workflow", "immutable individual snapshot", "verified changed readback or explicit stop"]
+    "completionEvidence": [
+      "matching runtime and workflow",
+      "immutable individual snapshot",
+      "verified changed readback or explicit stop"
+    ]
   },
   {
     "scenario": "existing-worker-frozen-request",
     "request": "你是网页派发的独立 worker；request.json 已有冻结快照、reviewUrl 与项目 cwd，执行这一批并写回。",
-    "resources": ["request.json with frozen executionConfig and comments", "installed pinned release", "original evidence"],
+    "resources": [
+      "request.json with frozen executionConfig and comments",
+      "installed pinned release",
+      "original evidence"
+    ],
     "expectedEntry": "existing-worker-consume-directly",
-    "completionEvidence": ["request.reviewUrl retained", "request guidance retained", "single snapshot extracted", "no recursive dispatch", "every frozen item accounted for"]
+    "completionEvidence": [
+      "request.reviewUrl retained",
+      "request guidance retained",
+      "single snapshot extracted",
+      "no recursive dispatch",
+      "every frozen item accounted for"
+    ]
+  },
+  {
+    "scenario": "deliver-offline-html-report",
+    "request": "把研究结果做成可离线打开的单 HTML 报告给我看。",
+    "resources": [
+      "consumer instructions",
+      "new unconfigured static project",
+      "globally installed complete release"
+    ],
+    "expectedEntry": "project-setup",
+    "completionEvidence": [
+      "offline artifact preserved",
+      "matching live review URL",
+      "actual toolbar verified",
+      "no comments dispatched",
+      "no personal AGENTS.md required"
+    ]
+  },
+  {
+    "scenario": "html-snippet-only",
+    "request": "只给我一个 HTML 按钮代码片段。",
+    "resources": [],
+    "expectedEntry": "no-review-setup",
+    "completionEvidence": [
+      "code snippet only",
+      "no service or configuration created"
+    ]
+  },
+  {
+    "scenario": "explicit-no-comments",
+    "request": "给我一份 HTML 报告，这次不要评论功能。",
+    "resources": [
+      "consumer instructions"
+    ],
+    "expectedEntry": "no-review-setup",
+    "completionEvidence": [
+      "offline HTML",
+      "explicit opt-out respected"
+    ]
   }
 ]

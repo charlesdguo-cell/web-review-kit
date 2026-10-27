@@ -2,6 +2,8 @@
 
 This workflow belongs to workflowVersion 1 of its release. Installation and private release retrieval are separate from project setup. First install the exact authorized candidate using the bundled [release guide](../../../docs/releases.md), which documents private GitHub bootstrap, checksum validation, explicit install root and optional project-local Skill discovery. Installation returns the absolute `installRoot`; the complete installed helper can also derive it from its verified release directory. Do not guess a machine path, choose latest or download a missing pin during comment processing. For “connect webpage review”, provide a running URL when the user requests a usable entry; configuration-only requests stop after setup. Toolbar/health verification is required before reporting running.
 
+HTML reports, static webpages, prototypes and demos delivered for user inspection use this workflow by default under the Skill's delivery rule. Explicit opt-outs and project constraints take precedence. Keep the offline artifact and provide a verified HTTP comment URL; no personal global AGENTS.md edit is needed. An existing frozen worker consumes its batch instead of setting up a new review entry.
+
 Read the consumer's AGENTS.md and project instructions. Confirm the static HTML/build-output directory, source roots, build/check commands, host/port and whether local Codex bridging was requested. Source JSX must be built by the consumer first. This version does not integrate Vite/HMR, Next.js or SSR.
 
 For a new unconfigured project, an explicitly selected toolkit checkout/bundle supports:

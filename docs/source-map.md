@@ -2,7 +2,7 @@
 
 Baseline captured 2026-10-27 from the **current working tree**, not Git HEAD, of `morsea-prototype`. Source HEAD was `9ce898fa7178befa4ac830cdbd1577255981a971`; the working tree was dirty and was not committed or changed by extraction. No business component, production review record, screenshot or asset is required by this repository's tests.
 
-Recovery evidence is external, private and limited to this extraction's recovery: `/Users/charles/Documents/codex-backups/web-review-kit-20261027T152615`. It contains the full review-data directory, runtime/support/deploy snapshot, protected SHA-256 manifests, Git status and read-only service/job observations. It must not be published or automatically replayed over current data.
+Recovery evidence is external, private and limited to this extraction's recovery: `/Users/charles/.local/share/web-review-kit-adoption-backups/web-review-kit-20261027T152615`. It contains the full review-data directory, runtime/support/deploy snapshot, protected SHA-256 manifests, Git status and read-only service/job observations. It must not be published or automatically replayed over current data.
 
 ## File provenance
 

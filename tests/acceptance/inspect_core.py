@@ -6,7 +6,7 @@ from pathlib import Path
 import urllib.request
 
 V = Path(os.environ['VALIDATION_PROJECT']).resolve()
-assert V == Path('/Users/charles/Documents/codex/web-review-kit-validation')
+assert V == Path('/Users/charles/.local/share/web-review-kit-validation')
 M = Path('/Users/charles/Documents/codex/morsea-prototype')
 OUT = V / 'artifacts/acceptance'
 BACKUP = Path(os.environ['WORKER_EVIDENCE_BACKUP']).resolve()

@@ -17,7 +17,7 @@ import urllib.request
 W = Path(__file__).resolve().parents[2]
 RELEASE = Path('/Users/charles/.local/share/web-review-kit/releases/0.1.0-rc.3')
 V = Path(os.environ['VALIDATION_PROJECT']).resolve()
-assert V == Path('/Users/charles/Documents/codex/web-review-kit-validation')
+assert V == Path('/Users/charles/.local/share/web-review-kit-validation')
 OUT = V / 'artifacts/acceptance'
 checks = []
 def check(name, result):

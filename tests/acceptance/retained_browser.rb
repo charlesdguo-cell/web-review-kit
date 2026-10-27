@@ -1,6 +1,6 @@
 # Read-only browser verification of the retained project. Never dispatches or updates comments.
 require_relative '../support/browser'
-root=File.expand_path(ENV.fetch('VALIDATION_PROJECT'));raise 'Wrong project' unless root=='/Users/charles/Documents/codex/web-review-kit-validation'
+root=File.expand_path(ENV.fetch('VALIDATION_PROJECT'));raise 'Wrong project' unless root=='/Users/charles/.local/share/web-review-kit-validation'
 base='http://127.0.0.1:8791/';out=File.join(root,'artifacts/acceptance');b=PrototypeBrowser.new;c=b.cdp;checks=[];ui="document.querySelector('#prototype-review').shadowRoot"
 check=lambda{|name,result|raise name unless result;checks<<name;puts 'PASS '+name}
 click=lambda{|selector|c.evaluate("#{ui}.querySelector(#{selector.to_json}).click()")}
