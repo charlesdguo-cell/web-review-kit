@@ -90,6 +90,35 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.data_hashes(), data)
         self.assertEqual(resolve_project_release(self.project, self.install), old)
 
+    def test_installed_helper_global_root_override_cannot_relocate_update_or_rollback(self):
+        old = self.installed()
+        other_root = self.root / 'installation B'
+        install_release(self.package(), other_root)  # Current pin exists in both A and B.
+        target = install_release(self.package('0.2.0-only-in-B'), other_root)
+        helper = old / 'skills/web-review/scripts/review.py'
+        original = (self.project / 'review.config.json').read_bytes()
+        data = self.data_hashes()
+        for command in ('update', 'rollback'):
+            result = subprocess.run([sys.executable, str(helper), '--project', str(self.project),
+                                     '--install-root', str(other_root), command, '--target', str(target)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)['error'], 'installation_root_conflict')
+            self.assertEqual((self.project / 'review.config.json').read_bytes(), original)
+            self.assertEqual(resolve_project_release(self.project, self.install), old)
+        self.assertEqual(self.data_hashes(), data)
+
+    def test_newer_installed_host_can_change_older_pin_with_explicit_same_root(self):
+        old = self.installed()
+        new = self.installed('0.2.0-newer-host')
+        helper = new / 'skills/web-review/scripts/review.py'
+        for command, target in [('update', new), ('rollback', old)]:
+            result = subprocess.run([sys.executable, str(helper), '--project', str(self.project),
+                                     '--install-root', str(self.install), command, '--target', str(target)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(resolve_project_release(self.project, self.install), target)
+
     def test_source_activation_requires_explicit_root_and_existing_current_pin(self):
         target = self.installed('0.2.0-target')
         before = (self.project / 'review.config.json').read_bytes()

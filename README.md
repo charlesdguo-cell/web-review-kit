@@ -2,7 +2,9 @@
 
 Private team toolkit for static HTML and build output: element, region and text comments, original screenshots, attachments, optimistic updates, offline export and shared HTTP review. The current checkout version is in [VERSION](VERSION). Runtime source lives only in `runtime/`; consumer copies are installed artifacts.
 
-The configured CLI, cross-project identity, guarded review operations, local Codex bridge, environment doctor and reusable [web-review Skill](skills/web-review/SKILL.md) are implemented. Deterministic private release packaging, explicit installation/update/rollback and the verified pinned-release resolver are implemented. Start with the [exact candidate installation guide](docs/releases.md); installation never downloads a newest version, changes consumer pins or modifies global agent configuration implicitly. Real Codex end-to-end acceptance remains a later task. Local protocol tests do not establish real job success or user design acceptance.
+The first-release goal is parity with the original comment/selection/location, screenshot/attachment, offline export and shared review behavior, plus the existing Codex frozen-batch processing, progress, supplemental instructions, stop/retry and same-thread follow-up. Project configuration, the [web-review Skill](skills/web-review/SKILL.md) and a verified fixed-version install support reuse. Core usability must be validated in Morsea and one independent static project while preserving original data and task history.
+
+Use the single installation root `/Users/charles/.local/share/web-review-kit` and the explicit candidate in [VERSION](VERSION), following the [installation guide](docs/releases.md). Installation does not implicitly change project pins, data or global agent configuration. Advanced update/rollback, cross-root relocation, old-candidate compatibility and multi-platform support are experimental or deferred; they are not first-release acceptance gates. Real Codex and user acceptance still require their own evidence; local protocol tests do not establish them.
 
 ## Configure and serve
 
@@ -33,7 +35,7 @@ python3 /absolute/skill/scripts/review.py --project /absolute/consumer --install
 
 Read the returned version-specific workflow path. Raw checkout CLI commands remain development interfaces: `version` reports actual and required versions plus whether this is a verified installation. Do not infer that a newer checkout is safe for an older configured pin.
 
-Available CLI commands are `setup`, `doctor`, `serve`, `version`, `list`, `show`, `export`, and `mark-changed`. `update`/`rollback` activate an explicit installed `--target` while the service and jobs are stopped; see [release commands](docs/releases.md). Commands return structured JSON or the service lifecycle result; errors distinguish unavailable configuration/capability (2) and version/project/concurrency conflicts (3).
+Available CLI commands are `setup`, `doctor`, `serve`, `version`, `list`, `show`, `export`, and `mark-changed`. Existing `update`/`rollback` commands are experimental and deferred from first-release acceptance; use the fixed-version installation workflow. Commands return structured JSON or the service lifecycle result; errors distinguish unavailable configuration/capability (2) and version/project/concurrency conflicts (3).
 
 ```sh
 python3 /absolute/toolkit/web-review.py --project /absolute/consumer show --id comment-ID
@@ -51,7 +53,7 @@ For HTTPS sharing behind a proxy that preserves Host/path, configure `server.hos
 
 For an offline copy, place `review.js`, `review.css` and `html2canvas.min.js` together and add `<script src="review-assets/review.js" data-prototype-review></script>` in the HTML head. File entrypoints persist in browser storage and export JSON with attachments; original screenshots require HTTP. If an agent cannot reach the local machine, supply an exported evidence package or authorized HTTPS shared review URL; automatic bridging is not implied. Offline records require explicit supported import/reconciliation before live completion can be claimed.
 
-Migration utility: `python3 runtime/merge_review_data.py --help`. This stopped-service importer preserves existing target versions; it is not continuous synchronization. Back up complete source and target data first.
+The existing stopped-service import utility is retained for separately authorized maintenance. Formal data migration and production deployment are outside the first-release scope; preserve original data and evidence during integration.
 
 ## Verification
 

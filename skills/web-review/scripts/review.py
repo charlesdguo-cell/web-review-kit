@@ -49,6 +49,15 @@ def resolve_release(project, install):
     return Path(resolve_project_release(project, install)).resolve()
 
 
+def host_install_root():
+    sys.path.insert(0, str(HOST_ROOT / 'runtime'))
+    try:
+        from release_manager import installed_root
+    except ImportError as error:
+        raise RouterError('Complete installed bundle required to derive install root', 'resolver_unavailable') from error
+    return installed_root(HOST_ROOT)
+
+
 def describe_release(release, identity):
     actual = (release / 'VERSION').read_text(encoding='utf-8').strip()
     if actual != identity['toolVersion']:
@@ -129,15 +138,19 @@ def main(argv=None):
         if args.request and args.command not in WORKER_COMMANDS:
             raise RouterError('Existing workers only consume their batch; setup/service/version changes are separate operations', 'invalid_arguments')
         project = args.project.resolve()
+        # Bind maintenance to the original installed helper BEFORE choosing a runtime.
+        # Otherwise a global --install-root could dispatch a different installation's
+        # CLI, whose own root guard would see only that substituted runtime.
+        changing_version = args.command in ('update', 'rollback')
+        installed_host = (HOST_ROOT / 'release-manifest.json').exists() or HOST_ROOT.parent.name == 'releases'
+        anchored_root = host_install_root() if changing_version and installed_host else None
         if args.install_root:
             install = args.install_root.expanduser().resolve()
         else:
-            sys.path.insert(0, str(HOST_ROOT / 'runtime'))
-            try:
-                from release_manager import installed_root
-            except ImportError as error:
-                raise RouterError('Complete installed bundle required to derive install root', 'resolver_unavailable') from error
-            install = installed_root(HOST_ROOT)
+            install = anchored_root if anchored_root is not None else host_install_root()
+        if anchored_root is not None and install != anchored_root:
+            raise RouterError('Version changes must use the installed helper\'s verified root; relocation is unsupported',
+                              'installation_root_conflict', 3)
         # Setup alone bootstraps an unconfigured project from this explicitly selected bundle.
         # Configured projects, including repeated setup, always use the project's pin.
         if args.command == 'setup' and not (project / 'review.config.json').exists():
