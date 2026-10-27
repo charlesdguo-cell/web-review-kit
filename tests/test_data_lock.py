@@ -1,4 +1,6 @@
 import json
+import socket
+import threading
 from pathlib import Path
 import subprocess
 import sys
@@ -8,7 +10,7 @@ from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 from data_lock import acquire_data_lock, DataLockError
-from server import make_server
+from server import make_server, atomic_json
 
 RUNTIME = Path(__file__).resolve().parents[1] / 'runtime'
 CHILD = '''import json, sys
@@ -101,3 +103,106 @@ class DataLockTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
         self.assertIn('已在运行', process.stdout)
         self.save(port, 'still-writing-001')
+
+    def test_close_drains_inflight_write_before_replacement_can_save(self):
+        data = self.root / 'drain-data'
+        entered, resume, close_started, closed = (threading.Event() for _ in range(4))
+        failures = []
+        def paused_write(path, value):
+            entered.set()
+            if not resume.wait(5):
+                raise RuntimeError('test did not release pending write')
+            atomic_json(path, value)
+        server = make_server(self.root, data, 0)
+        serving = threading.Thread(target=server.serve_forever, daemon=True)
+        serving.start()
+        def first_save():
+            try:
+                self.save(server.server_port, 'first-review')
+            except BaseException as error:
+                failures.append(error)
+        def close():
+            close_started.set()
+            server.server_close()
+            closed.set()
+        writing = threading.Thread(target=first_save, daemon=True)
+        closing = threading.Thread(target=close, daemon=True)
+        replacement = None
+        replacement_worker = None
+        try:
+            with patch('server.atomic_json', side_effect=paused_write):
+                writing.start()
+                self.assertTrue(entered.wait(3))
+                server.shutdown()
+                serving.join(timeout=3)
+                closing.start()
+                self.assertTrue(close_started.wait(1))
+                self.assertFalse(closed.wait(0.1), 'closed before pending writer drained')
+                with self.assertRaises(DataLockError):
+                    make_server(self.root, data, 0)
+                resume.set()
+                writing.join(timeout=3)
+                closing.join(timeout=3)
+                self.assertTrue(closed.is_set())
+                self.assertFalse(writing.is_alive())
+            self.assertEqual(failures, [])
+            replacement = make_server(self.root, data, 0)
+            replacement_worker = threading.Thread(target=replacement.serve_forever, daemon=True)
+            replacement_worker.start()
+            self.save(replacement.server_port, 'second-review')
+            self.assertEqual([item['id'] for item in json.loads((data / 'comments.json').read_text())],
+                             ['first-review', 'second-review'])
+        finally:
+            resume.set()
+            writing.join(timeout=3)
+            if closing.ident is not None:
+                closing.join(timeout=3)
+            server.shutdown()
+            server.server_close()
+            serving.join(timeout=3)
+            if replacement is not None:
+                replacement.shutdown()
+                replacement.server_close()
+                replacement_worker.join(timeout=3)
+
+    def test_idle_partial_post_cannot_hold_close_or_write_after_release(self):
+        data = self.root / 'idle-data'
+        server = make_server(self.root, data, 0)
+        begun = threading.Event()
+        original_post = server.RequestHandlerClass.do_POST
+        def signal_post(handler):
+            begun.set()
+            return original_post(handler)
+        server.RequestHandlerClass.do_POST = signal_post
+        serving = threading.Thread(target=server.serve_forever, daemon=True)
+        serving.start()
+        connection = socket.create_connection(('127.0.0.1', server.server_port), timeout=3)
+        comment = {'id': 'late-review', 'text': 'late', 'status': 'open', 'screenshotData': PNG}
+        payload = json.dumps({'comment': comment}).encode()
+        headers = ('POST /__review/comments HTTP/1.0\r\nHost: 127.0.0.1:{0}\r\n'
+                   'Origin: http://127.0.0.1:{0}\r\nContent-Length: {1}\r\n\r\n').format(
+                       server.server_port, len(payload)).encode()
+        closed = threading.Event()
+        closing = threading.Thread(target=lambda: (server.server_close(), closed.set()), daemon=True)
+        replacement = None
+        try:
+            connection.sendall(headers + payload[:1])
+            self.assertTrue(begun.wait(3))
+            server.shutdown()
+            serving.join(timeout=3)
+            closing.start()
+            self.assertTrue(closed.wait(1), 'idle body reader blocked close')
+            replacement = make_server(self.root, data, 0)
+            connection.sendall(payload[1:])
+            response = connection.recv(4096)
+            self.assertIn(b'409', response.split(b'\r\n', 1)[0])
+            self.assertFalse((data / 'comments.json').exists())
+        finally:
+            connection.close()
+            if closing.ident is not None:
+                closing.join(timeout=3)
+            server.shutdown()
+            server.server_close()
+            serving.join(timeout=3)
+            if replacement is not None:
+                replacement.server_close()

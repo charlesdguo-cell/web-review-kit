@@ -2,6 +2,7 @@
 """Serve any static prototype with persistent reviews, locally or behind HTTPS Nginx."""
 import argparse
 import base64
+from contextlib import contextmanager
 from dataclasses import asdict
 import errno
 import hashlib
@@ -38,6 +39,9 @@ class ReviewHTTPServer(ThreadingHTTPServer):
     request_queue_size = 128
 
     def __init__(self, address, handler, data_dir):
+        self._writers = threading.Condition()
+        self._active_writers = 0
+        self._closing = False
         self._data_lock = acquire_data_lock(data_dir)
         self._data_lock.__enter__()
         try:
@@ -52,11 +56,31 @@ class ReviewHTTPServer(ThreadingHTTPServer):
         if owner is not None:
             owner.__exit__(None, None, None)
 
+    @contextmanager
+    def data_writer(self):
+        # Admit only complete, validated requests. Idle sockets must not hold close
+        # open, and a previously accepted socket must never write after ownership ends.
+        with self._writers:
+            if self._closing:
+                raise DataLockError('Review service is closing; reload before saving')
+            self._active_writers += 1
+        try:
+            yield
+        finally:
+            with self._writers:
+                self._active_writers -= 1
+                self._writers.notify_all()
+
     def server_close(self):
+        with self._writers:
+            self._closing = True
         try:
             super().server_close()
         finally:
-            self._release_data_lock()
+            with self._writers:
+                while self._active_writers:
+                    self._writers.wait()
+                self._release_data_lock()
 
 
 def attachment_image(data_url):
@@ -307,63 +331,67 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                     raise ValueError('评论文字不能超过 10000 字')
                 if comment.get('status') not in ('open', 'changed', 'resolved'):
                     raise ValueError('评论状态无效')
-                with lock:
-                    require_writable_data(data, project_config.project_id if project_config is not None else None)
-                    if project_config is not None and payload.get('projectId', project_config.project_id) != project_config.project_id:
-                        raise DataVersionError('Review submission belongs to a different project')
-                    items = records()
-                    previous = next((c for c in items if c['id'] == comment['id']), None)
-                    try:
-                        attachments, pending = self.prepare_attachments(comment, previous)
-                    except ValueError:
-                        if previous and payload.get('expectedUpdate') != previous.get('updatedAt'):
-                            return self.send(409, {'error': '这条评论已更新，请重新打开后再保存'})
-                        raise
-                    if not comment['text'].strip() and not attachments:
-                        raise ValueError('请填写评论或添加图片')
-                    if previous and payload.get('expectedUpdate') != previous.get('updatedAt'):
-                        # A committed edit may lose its response. A retry of that
-                        # exact record is already satisfied; do not rewrite it or
-                        # accept any stale changes to content, status or anchors.
-                        if same_submission(previous, comment):
-                            return self.send(200, {'comment': self.public_record(previous)})
-                        return self.send(409, {'error': '这条评论已更新，请重新打开后再保存'})
-                    screenshot = comment.pop('screenshotData', None)
-                    if previous:
-                        comment['screenshot'] = previous.get('screenshot')
-                    elif screenshot:
-                        if not screenshot.startswith('data:image/png;base64,'):
-                            raise ValueError('截图格式无效')
-                        image = base64.b64decode(screenshot.split(',', 1)[1], validate=True)
-                        if not image.startswith(b'\x89PNG\r\n\x1a\n'):
-                            raise ValueError('截图格式无效')
-                        image_path = data / 'screenshots' / (comment['id'] + '.png')
-                        pending.append((image_path, image))
-                        comment['screenshot'] = '/__review/screenshots/' + image_path.name
-                    else:
-                        raise ValueError('截图未就绪，请重试保存')
-                    now = str(time.time_ns())
-                    comment['number'] = previous['number'] if previous else max((c['number'] for c in items), default=0) + 1
-                    comment['createdAt'] = previous['createdAt'] if previous else now
-                    comment['updatedAt'] = now
-                    if previous:
-                        items[items.index(previous)] = comment
-                    else:
-                        items.append(comment)
-                    for image_path, image in pending:
-                        image_path.parent.mkdir(parents=True, exist_ok=True)
-                        if not image_path.exists():
-                            temporary = image_path.with_name(image_path.name + '.tmp')
-                            temporary.write_bytes(image)
-                            os.replace(temporary, image_path)
-                    atomic_json(manifest, items)
-                    return self.send(200, {'comment': self.public_record(comment)})
-            except DataVersionError as error:
+                status, value = self.save_comment(payload, comment)
+                return self.send(status, value)
+            except (DataVersionError, DataLockError) as error:
                 return self.send(409, {'error': str(error), 'code': error.code})
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
                 return self.send(400, {'error': str(error)})
             except OSError:
                 return self.send(500, {'error': '评论文件保存失败，内容仍保留在输入框中'})
+
+        def save_comment(self, payload, comment):
+            with lock, self.server.data_writer():
+                require_writable_data(data, project_config.project_id if project_config is not None else None)
+                if project_config is not None and payload.get('projectId', project_config.project_id) != project_config.project_id:
+                    raise DataVersionError('Review submission belongs to a different project')
+                items = records()
+                previous = next((c for c in items if c['id'] == comment['id']), None)
+                try:
+                    attachments, pending = self.prepare_attachments(comment, previous)
+                except ValueError:
+                    if previous and payload.get('expectedUpdate') != previous.get('updatedAt'):
+                        return 409, {'error': '这条评论已更新，请重新打开后再保存'}
+                    raise
+                if not comment['text'].strip() and not attachments:
+                    raise ValueError('请填写评论或添加图片')
+                if previous and payload.get('expectedUpdate') != previous.get('updatedAt'):
+                    # A committed edit may lose its response. A retry of that
+                    # exact record is already satisfied; do not rewrite it or
+                    # accept any stale changes to content, status or anchors.
+                    if same_submission(previous, comment):
+                        return 200, {'comment': self.public_record(previous)}
+                    return 409, {'error': '这条评论已更新，请重新打开后再保存'}
+                screenshot = comment.pop('screenshotData', None)
+                if previous:
+                    comment['screenshot'] = previous.get('screenshot')
+                elif screenshot:
+                    if not screenshot.startswith('data:image/png;base64,'):
+                        raise ValueError('截图格式无效')
+                    image = base64.b64decode(screenshot.split(',', 1)[1], validate=True)
+                    if not image.startswith(b'\x89PNG\r\n\x1a\n'):
+                        raise ValueError('截图格式无效')
+                    image_path = data / 'screenshots' / (comment['id'] + '.png')
+                    pending.append((image_path, image))
+                    comment['screenshot'] = '/__review/screenshots/' + image_path.name
+                else:
+                    raise ValueError('截图未就绪，请重试保存')
+                now = str(time.time_ns())
+                comment['number'] = previous['number'] if previous else max((c['number'] for c in items), default=0) + 1
+                comment['createdAt'] = previous['createdAt'] if previous else now
+                comment['updatedAt'] = now
+                if previous:
+                    items[items.index(previous)] = comment
+                else:
+                    items.append(comment)
+                for image_path, image in pending:
+                    image_path.parent.mkdir(parents=True, exist_ok=True)
+                    if not image_path.exists():
+                        temporary = image_path.with_name(image_path.name + '.tmp')
+                        temporary.write_bytes(image)
+                        os.replace(temporary, image_path)
+                atomic_json(manifest, items)
+                return 200, {'comment': self.public_record(comment)}
 
         def codex_request(self):
             if not codex_tasks:
