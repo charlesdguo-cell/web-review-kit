@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import io
+import re
 import subprocess
 import sys
 import tarfile
@@ -65,12 +66,62 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn('skills/web-review/workflow.json', names)
             self.assertFalse(any('DO NOT PACKAGE' in bundle.extractfile(name).read().decode(errors='ignore') for name in names))
 
+    def test_manifest_declares_actual_browser_export_format(self):
+        release = self.installed()
+        producer = (release / 'runtime/review.js').read_text()
+        match = re.search(r"format:'prototype-review',version:(\d+),comments:", producer)
+        self.assertIsNotNone(match, 'Locate the actual browser export envelope')
+        self.assertEqual(verify_release(release)['exportFormats'], [int(match.group(1))])
+
+    def test_cross_root_api_and_installed_cli_reject_without_changing_pin(self):
+        old = self.installed()
+        other_root = self.root / 'installation B'
+        target = install_release(self.package('0.2.0-cross-root'), other_root)
+        before = (self.project / 'review.config.json').read_bytes()
+        data = self.data_hashes()
+        helper = old / 'skills/web-review/scripts/review.py'
+        for extra in ([], ['--install-root', str(other_root)]):
+            result = subprocess.run([sys.executable, str(helper), '--project', str(self.project),
+                                     'update', '--target', str(target)] + extra, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        with self.assertRaises(ReleaseError):
+            activate_release(self.config, target, install_root=self.install)
+        self.assertEqual((self.project / 'review.config.json').read_bytes(), before)
+        self.assertEqual(self.data_hashes(), data)
+        self.assertEqual(resolve_project_release(self.project, self.install), old)
+
+    def test_source_activation_requires_explicit_root_and_existing_current_pin(self):
+        target = self.installed('0.2.0-target')
+        before = (self.project / 'review.config.json').read_bytes()
+        with self.assertRaises(ReleaseError) as missing:
+            activate_release(self.config, target)
+        self.assertEqual(missing.exception.code, 'installation_context_required')
+        with self.assertRaises(ReleaseError) as current:
+            activate_release(self.config, target, install_root=self.install)
+        self.assertEqual(current.exception.code, 'release_unavailable')
+        self.assertEqual((self.project / 'review.config.json').read_bytes(), before)
+        self.installed(TOOL_VERSION)
+        for arguments, expected in [([], 2), (['--install-root', str(self.install)], 0)]:
+            result = subprocess.run([sys.executable, str(ROOT / 'web-review.py'), '--project', str(self.project),
+                                     'update', '--target', str(target)] + arguments, capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        self.assertEqual(load_project_config(self.project).tool_version, '0.2.0-target')
+
+    def test_incorrect_export_metadata_exception_is_exact_historical_manifest_only(self):
+        release = self.installed('0.1.0-rc.1')
+        manifest_path = release / 'release-manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        manifest['exportFormats'] = [1]
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaises(ReleaseError):
+            verify_release(release)
+
     def test_corrupt_release_is_not_activated(self):
         release = self.installed()
         original = (self.project / 'review.config.json').read_bytes()
         (release / 'runtime/review.js').write_text('corrupt')
         with self.assertRaises(ReleaseError):
-            activate_release(self.config, release)
+            activate_release(self.config, release, install_root=self.install)
         self.assertEqual((self.project / 'review.config.json').read_bytes(), original)
 
     def test_repeat_install_preserves_pin_config_data_and_rejects_local_changes(self):
@@ -90,11 +141,11 @@ class ReleaseTests(unittest.TestCase):
         old = self.installed()
         new = self.installed('0.2.0-test')
         before = self.data_hashes()
-        self.assertEqual(activate_release(self.config, new)['toolVersion'], '0.2.0-test')
+        self.assertEqual(activate_release(self.config, new, install_root=self.install)['toolVersion'], '0.2.0-test')
         self.assertEqual(self.data_hashes(), before)
         (self.config.data_dir / 'comments.json').write_text('[{"id":"new","updatedAt":"still-original"}]')
         after = self.data_hashes()
-        activate_release(load_project_config(self.project), old)
+        activate_release(load_project_config(self.project), old, install_root=self.install)
         self.assertEqual(self.data_hashes(), after)
         self.assertFalse((self.config.data_dir / 'meta.json').exists())
         self.assertFalse(self.config.jobs_dir.exists())
@@ -104,13 +155,13 @@ class ReleaseTests(unittest.TestCase):
         target = self.installed('0.2.0-test')
         with acquire_data_lock(self.config.data_dir):
             with self.assertRaises(ValueError):
-                activate_release(self.config, target)
+                activate_release(self.config, target, install_root=self.install)
         job = self.config.jobs_dir / 'synthetic'
         job.mkdir(parents=True)
         (job / 'status.json').write_text('{"status":"running"}')
         before = (job / 'status.json').read_bytes()
         with self.assertRaises(ReleaseError):
-            activate_release(self.config, target)
+            activate_release(self.config, target, install_root=self.install)
         self.assertEqual((job / 'status.json').read_bytes(), before)
 
     def test_invalid_foreign_or_new_schema_data_never_mutated(self):
@@ -121,7 +172,7 @@ class ReleaseTests(unittest.TestCase):
             (self.config.data_dir / 'meta.json').write_text(value)
             before = self.data_hashes()
             with self.assertRaises(ValueError):
-                activate_release(self.config, target)
+                activate_release(self.config, target, install_root=self.install)
             self.assertEqual(self.data_hashes(), before)
             self.assertEqual(load_project_config(self.project).tool_version, TOOL_VERSION)
 
@@ -132,7 +183,7 @@ class ReleaseTests(unittest.TestCase):
         raw = (self.project / 'review.config.json').read_bytes()
         with patch('release_manager.os.replace', side_effect=OSError('synthetic disk failure')):
             with self.assertRaises(OSError):
-                activate_release(self.config, target)
+                activate_release(self.config, target, install_root=self.install)
         self.assertEqual((self.project / 'review.config.json').read_bytes(), raw)
         self.assertEqual(self.data_hashes(), before)
 
@@ -193,10 +244,10 @@ class ReleaseTests(unittest.TestCase):
         with (self.config.jobs_dir / 'active.lock').open('a+') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaises(ReleaseError):
-                activate_release(self.config, target)
+                activate_release(self.config, target, install_root=self.install)
         (current / 'runtime/server.py').write_text('local modification')
         with self.assertRaises(ReleaseError):
-            activate_release(self.config, target)
+            activate_release(self.config, target, install_root=self.install)
         self.assertEqual(load_project_config(self.project).tool_version, TOOL_VERSION)
 
     def test_doctor_mismatch_checks_workflow_without_protocol_call(self):

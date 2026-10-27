@@ -28,6 +28,7 @@ schemas/project-config.schema.json schemas/review-data-v1.schema.json
 scripts/package.py scripts/install.py compat/server.py docs/releases.md docs/browser-identity.md
 docs/source-map.md'''.split()
 DEPENDENCY_SHA256 = 'e13cf4fb0919313c321783fb67b51b18dd0e7e90d33ba9fc50706278f070d363'
+LEGACY_RC1_MANIFEST_SHA256 = '50cc67d2ca9c36b066253721f87ccd41b5be6f9c522e851803cc5a2656b3fc88'
 
 
 class ReleaseError(ValueError):
@@ -79,7 +80,7 @@ def package_release(source_root: Path, destination: Path) -> Path:
     hashes = {name: _hash(data) for name, data in contents.items()}
     manifest = {'manifestVersion': 1, 'package': 'web-review-kit', 'version': version,
                 'files': hashes, 'source': {'treeSha256': _hash(_encode(hashes))},
-                'storageSchemas': {'read': [1], 'write': [1]}, 'exportFormats': [1],
+                'storageSchemas': {'read': [1], 'write': [1]}, 'exportFormats': [2],
                 'workflowVersion': 1, 'python': '>=3.9',
                 'dependencies': [{'name': 'html2canvas-pro', 'version': '2.4.2',
                                   'sha256': DEPENDENCY_SHA256, 'license': 'MIT',
@@ -135,8 +136,13 @@ def verify_release(path: Path) -> dict:
             raise ReleaseError('Managed file integrity conflict: ' + name)
     if manifest.get('source') != {'treeSha256': _hash(_encode(manifest['files']))}:
         raise ReleaseError('Source digest mismatch')
+    # rc.1's published manifest incorrectly labeled the unchanged browser v2 export
+    # as v1. Recognize only those exact historical bytes for same-root transitions;
+    # never rewrite them or accept the incorrect declaration in another release.
+    legacy_export_metadata = (version == '0.1.0-rc.1' and
+                              _hash((root / 'release-manifest.json').read_bytes()) == LEGACY_RC1_MANIFEST_SHA256)
     if (manifest.get('storageSchemas') != {'read': [1], 'write': [1]} or
-            manifest.get('exportFormats') != [1] or manifest.get('workflowVersion') != 1):
+            manifest.get('exportFormats') != ([1] if legacy_export_metadata else [2]) or manifest.get('workflowVersion') != 1):
         raise ReleaseError('Unsupported storage/export/workflow contract')
     _workflow(root)
     if manifest['files']['runtime/html2canvas.min.js'] != DEPENDENCY_SHA256:
@@ -241,10 +247,19 @@ def resolve_project_release(project_root, install_root) -> Path:
     return release
 
 
-def activate_release(config, target: Path) -> dict:
+def activate_release(config, target: Path, *, install_root=None) -> dict:
     """Atomic config pin only; no implicit migration, startup, metadata creation or task mutation."""
+    host = Path(__file__).resolve().parent.parent
+    host_root = installed_root(host) if (host / 'release-manifest.json').exists() else None
+    if install_root is None and host_root is None:
+        raise ReleaseError('Source/API activation requires explicit install_root; target is not installation context',
+                           'installation_context_required', 2)
+    root = Path(install_root).expanduser().resolve() if install_root is not None else host_root
+    if host_root is not None and root != host_root:
+        raise ReleaseError('Explicit install_root differs from the verified calling runtime', 'installation_root_conflict')
     target = Path(target).resolve()
-    root = installed_root(target)
+    if installed_root(target) != root:
+        raise ReleaseError('Target belongs to another installation; root relocation is not supported', 'installation_root_conflict')
     manifest = verify_release(target)
     config_path = config.project_root / 'review.config.json'
     with acquire_data_lock(config.data_dir), ExitStack() as stack:
@@ -257,11 +272,9 @@ def activate_release(config, target: Path) -> dict:
         current = load_project_config(config.project_root)
         if current != config:
             raise ReleaseError('Project configuration changed during activation', 'configuration_conflict')
-        # Existing installed release must still be intact. Initial adoption from a legacy/source
-        # pin can only happen when that version has never been installed in this root.
-        previous = root / 'releases' / _version(config.tool_version)
-        if previous.exists():
-            resolve_project_release(config.project_root, root)
+        # Never infer current installation from target; require an intact existing pin
+        # in the verified caller/explicit root before changing configuration.
+        resolve_project_release(config.project_root, root)
         data = inspect_data_version(config.data_dir)
         if data['projectId'] not in (None, config.project_id):
             raise ReleaseError('Review data belongs to another project', 'project_conflict')

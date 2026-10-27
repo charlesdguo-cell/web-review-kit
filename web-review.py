@@ -53,6 +53,7 @@ def main(argv=None):
     for name in ('update', 'rollback'):
         switch = commands.add_parser(name, help='Activate an explicitly installed release while service/jobs are stopped')
         switch.add_argument('--target', type=Path, required=True)
+        switch.add_argument('--install-root', type=Path, help='Required for source checkout activation; installed callers derive and enforce their own root')
     commands.add_parser('list', help='List reviews from the configured service')
     show = commands.add_parser('show', help='Read a frozen review snapshot')
     show.add_argument('--id', required=True)
@@ -83,7 +84,7 @@ def main(argv=None):
             status = runtime_status(config)
             result.update(status)
             if args.command in ('update', 'rollback'):
-                value = activate_release(config, args.target)
+                value = activate_release(config, args.target, install_root=args.install_root)
                 value.update(command=args.command, runningToolVersion=TOOL_VERSION)
                 print(json.dumps(value, ensure_ascii=False), flush=True)
                 return 0
