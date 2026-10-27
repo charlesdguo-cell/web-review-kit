@@ -8,12 +8,46 @@
   const shared = script.dataset.shared === 'true';
   const codexEnabled = script.dataset.codex === 'true' && !shared;
   const basePath = script.dataset.basePath || '/';
-  const pageKey = value => {
-    let path = value || '/';
-    if(basePath !== '/' && path.startsWith(basePath))path = '/' + path.slice(basePath.length);
-    return path.replace(/\/index\.html$/, '/');
+  const attributeJSON = name => {
+    try { return JSON.parse(script.dataset[name] || '{}'); } catch { return {}; }
   };
-  const storageKey = 'prototype.review.v1';
+  const projectId = script.dataset.projectId || '';
+  const pageIdentity = {strategy:'pathname',queryKeys:[],includeHash:false,...attributeJSON('pageIdentity')};
+  const browserStorage = {namespace:projectId,legacyKeys:[],...attributeJSON('browserStorage')};
+  const namespace = browserStorage.namespace || projectId;
+  const storageKeys = Object.fromEntries(['comments','codexDrafts','codexRequests'].map(kind=>[
+    kind,namespace?'prototype.review.'+encodeURIComponent(namespace)+'.'+kind:
+      kind==='comments'?'prototype.review.v1':'prototype.review.'+kind
+  ]));
+  const readStorage = (storage,kind,fallback) => {
+    try {
+      const target=storageKeys[kind],legacy=kind==='comments'?'prototype.review.v1':'prototype.review.'+kind;
+      // Only named legacy keys may be read, and never overwrite or remove evidence.
+      if(namespace&&Array.isArray(browserStorage.legacyKeys)&&browserStorage.legacyKeys.includes(legacy)){
+        const marker=target+'.migrated.'+encodeURIComponent(legacy);
+        if(storage.getItem(target)===null&&storage.getItem(marker)===null){
+          const original=storage.getItem(legacy);
+          if(original!==null){
+            JSON.parse(original);
+            storage.setItem(target,original);
+            storage.setItem(marker,JSON.stringify({source:legacy,target,copiedAt:new Date().toISOString()}));
+          }
+        }
+      }
+      return JSON.parse(storage.getItem(target)||fallback);
+    } catch { return JSON.parse(fallback); }
+  };
+  const pageKey = value => {
+    const url = new URL(value || '/',location.href);
+    let path = url.pathname;
+    if(basePath !== '/' && path.startsWith(basePath))path = '/' + path.slice(basePath.length);
+    path=path.replace(/\/index\.html$/, '/');
+    const query=new URLSearchParams();
+    const keys=Array.isArray(pageIdentity.queryKeys)?pageIdentity.queryKeys:[];
+    [...new Set(keys)].sort().forEach(key=>url.searchParams.getAll(key).forEach(value=>query.append(key,value)));
+    return path+(query.size?'?'+query.toString():'')+(pageIdentity.includeHash?url.hash:'');
+  };
+  const storageKey = storageKeys.comments;
   const fileMode = location.protocol === 'file:';
   const imageTypes=['image/png','image/jpeg','image/webp','image/gif'];
   const maxImages=6,maxImageBytes=5*1024*1024,maxTotalImageBytes=10*1024*1024;
@@ -37,8 +71,8 @@
     const unique = selector => { try { return document.querySelectorAll(selector).length === 1; } catch { return false; } };
     const query = selector => { try { return document.querySelector(selector); } catch { return null; } };
     const state = {active:false, mode:'element', selected:null, hover:null, drag:null, note:'', attachments:[], adding:false, items:[], list:false, all:false, saving:false, error:'', build:'local', animations:[], videos:[], editing:null, childStack:[], codex:null, codexAvailable:false, codexReason:'正在连接本机 Codex', codexPanel:false, codexSending:false, chatSending:false, chatError:'', chatDrafts:{}, chatRequests:{}};
-    try{state.chatDrafts=JSON.parse(sessionStorage.getItem('prototype.review.codexDrafts')||'{}');}catch{}
-    try{state.chatRequests=JSON.parse(sessionStorage.getItem('prototype.review.codexRequests')||'{}');}catch{}
+    try{state.chatDrafts=readStorage(sessionStorage,'codexDrafts','{}');}catch{}
+    try{state.chatRequests=readStorage(sessionStorage,'codexRequests','{}');}catch{}
     let shotPromise = null, screenshot = null, libraryPromise = null, noticeTimer, listFocus = null, toolbarMarkup = '';
 
     function label(el) {
@@ -84,7 +118,7 @@
         documentRect:{...r,x:r.x+scrollX,y:r.y+scrollY},ancestors,html:el.outerHTML.slice(0,12000)};
     }
     function pageContext() {
-      return {path:pageKey(location.pathname),url:location.href,title:document.title,build:state.build,
+      return {path:pageKey(location.href),url:location.href,title:document.title,build:state.build,
         viewport:{width:innerWidth,height:innerHeight,devicePixelRatio},scroll:{x:scrollX,y:scrollY},
         capturedAt:new Date().toISOString(),
         dialogs:[...document.querySelectorAll('[role=dialog],dialog[open]')].map(el=>({selector:path(el),label:label(el)})),
@@ -134,7 +168,7 @@
     function storeChatDraft(value) {
       if(!state.codex)return;
       state.chatDrafts[state.codex.id]=value;
-      try{sessionStorage.setItem('prototype.review.codexDrafts',JSON.stringify(state.chatDrafts));}catch{}
+      try{sessionStorage.setItem(storageKeys.codexDrafts,JSON.stringify(state.chatDrafts));}catch{}
     }
     function updateChatSend() {
       const send=ui.querySelector('[data-action="codex-send"]');
@@ -199,7 +233,7 @@
       const previous=state.chatRequests[job.id];
       const messageId=previous?.text===text?previous.id:crypto.randomUUID().replaceAll('-','');
       state.chatRequests[job.id]={id:messageId,text};state.chatSending=true;state.chatError='';updateChatSend();
-      try{sessionStorage.setItem('prototype.review.codexRequests',JSON.stringify(state.chatRequests));}catch{}
+      try{sessionStorage.setItem(storageKeys.codexRequests,JSON.stringify(state.chatRequests));}catch{}
       try{
         const response=await fetch(endpoint+'codex/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobId:job.id,messageId,text})});
         const data=await response.json();if(!response.ok)throw Error(data.error||'消息未发送，请重试');
@@ -208,7 +242,7 @@
           if((state.chatDrafts[job.id]||'').trim()===text){storeChatDraft('');if($('codex-input'))$('codex-input').value='';}
         }
         delete state.chatRequests[job.id];
-        try{sessionStorage.setItem('prototype.review.codexRequests',JSON.stringify(state.chatRequests));}catch{}
+        try{sessionStorage.setItem(storageKeys.codexRequests,JSON.stringify(state.chatRequests));}catch{}
       }catch(error){state.chatError=error.message;}
       finally{state.chatSending=false;renderCodex();toolbar();}
     }
@@ -311,20 +345,20 @@
       if(state.drag?.box)box=state.drag.box;
       $('outline').style.cssText=box?`display:block;left:${box.x}px;top:${box.y}px;width:${Math.max(2,box.width)}px;height:${Math.max(2,box.height)}px;`:'display:none';
       const visible=state.active || state.list;
-      $('markers').innerHTML=visible?state.items.filter(c=>pageKey(c.page.path)===pageKey(location.pathname)&&c.status!=='resolved').map(c=>{
+      $('markers').innerHTML=visible?state.items.filter(c=>pageKey(c.page.path)===pageKey(location.href)&&c.status!=='resolved').map(c=>{
         const r=liveRect(c.anchor); if(!r || r.x+r.width<0 || r.y+r.height<0 || r.x>innerWidth || r.y>innerHeight)return '';
         return `<button class="marker ${c.status==='changed'?'changed':''}" style="left:${Math.max(3,Math.min(innerWidth-30,r.x+r.width-12))}px;top:${Math.max(3,r.y-12)}px" data-action="locate" data-id="${esc(c.id)}" title="${esc(c.text)}" aria-label="查看评论 ${c.number}">${c.number}</button>`;
       }).join(''):'';
     }
     function renderList() {
       if(!state.list){$('list').innerHTML='';return;}
-      const items=state.items.filter(c=>state.all||pageKey(c.page.path)===pageKey(location.pathname)).slice().reverse();
+      const items=state.items.filter(c=>state.all||pageKey(c.page.path)===pageKey(location.href)).slice().reverse();
       $('list').innerHTML=`<section class="panel comments" role="dialog" aria-label="评论列表"><header><div><small>${endpoint?(shared?'团队评审':'本机评审'):'浏览器评审副本'}</small><strong>评论记录</strong></div><button data-action="list" aria-label="关闭评论列表">×</button></header><div class="list-tools"><button data-action="filter" aria-pressed="${!state.all}">${state.all?'全部页面':'当前页面'} ▾</button><button data-action="refresh">刷新</button><button data-action="export">导出</button></div><div class="comment-items">${items.length?items.map(c=>`<article id="comment-${esc(c.id)}" class="comment ${c.id===listFocus?'focused':''}"><div class="comment-head"><button data-action="locate" data-id="${esc(c.id)}">#${c.number} · ${esc(c.anchor.label)}</button><span>${{open:'待处理',changed:'待验收',resolved:'已解决'}[c.status]}</span></div><p>${esc(c.text)}</p>${imageMarkup(c.attachments,false,c.id)}<small>${esc(c.page.title)}${c.page.build!==state.build?' · 来自之前的原型版本':''}</small>${c.anchor.selectedText?`<blockquote>${esc(c.anchor.selectedText)}</blockquote>`:''}${c.resolution?`<p class="resolution">修改说明：${esc(c.resolution)}</p>`:''}<div class="comment-actions"><button data-action="snapshot" data-id="${esc(c.id)}">${c.screenshot||c.screenshotData?'查看截图':'未附截图'}</button><button data-action="edit" data-id="${esc(c.id)}">编辑</button><button data-action="status" data-id="${esc(c.id)}" data-status="${c.status==='resolved'?'open':'resolved'}">${c.status==='resolved'?'重新打开':'标为解决'}</button></div></article>`).join(''):'<div class="empty">还没有评论。<br>进入评论模式，选中需要调整的区域。</div>'}</div><div class="list-foot">${endpoint?(shared?'评论和截图共享保存 · 自动同步更新':'评论和截图保存在本机项目目录'):'评论保存在当前浏览器；导出后可交给我处理'}</div></section>`;
     }
     async function refresh() {
       try {
         if(endpoint){const r=await fetch(endpoint+'comments');if(!r.ok)throw Error('评审服务暂不可用');const d=await r.json();state.items=d.comments;state.build=d.build;}
-        else state.items=JSON.parse(localStorage.getItem(storageKey)||'[]');
+        else state.items=readStorage(localStorage,'comments','[]');
         toolbar();renderList();draw();
       }catch(error){notice(error.message||'读取评论失败，请重试');}
     }
@@ -362,7 +396,7 @@
     }
     function locate(comment) {
       listFocus=comment.id;state.list=true;state.codexPanel=false;renderCodex();renderList();
-      if(pageKey(comment.page.path)!==pageKey(location.pathname)){notice('这条评论在其他页面；可先查看截图，或退出评论后打开 '+comment.page.path);return;}
+      if(pageKey(comment.page.path)!==pageKey(location.href)){notice('这条评论在其他页面；可先查看截图，或退出评论后打开 '+comment.page.path);return;}
       const r=liveRect(comment.anchor);
       if(!r){notice('原区块已变化或尚未展开，请查看截图并重新打开对应内容');return;}
       query(comment.anchor.selector)?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});

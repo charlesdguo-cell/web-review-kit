@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 import errno
 import hashlib
+from html import escape
 import json
 import mimetypes
 import os
@@ -140,6 +141,15 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 base_path != requested['basePath'] or origins != set(requested['publicOrigins']) or
                 bool(codex_tasks) != project_config.codex['enabled']):
             raise ValueError('Server arguments do not match project configuration')
+    project_id = project_config.project_id if project_config is not None else ''
+    page_identity = {'strategy': 'pathname', 'queryKeys': [], 'includeHash': False}
+    browser_storage = {'namespace': project_id, 'legacyKeys': []}
+    if project_config is not None:
+        page_identity.update(project_config.page_identity)
+        browser_storage.update(project_config.browser_storage)
+    identity_attributes = (f' data-project-id="{escape(project_id, quote=True)}"'
+                           f' data-page-identity="{escape(json.dumps(page_identity, ensure_ascii=False), quote=True)}"'
+                           f' data-browser-storage="{escape(json.dumps(browser_storage, ensure_ascii=False), quote=True)}"')
     api = base_path + '/__review/'
     lock = threading.Lock()
     manifest = data / 'comments.json'
@@ -306,8 +316,8 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
             if target.suffix == '.html':
                 html = target.read_text()
                 # Every HTML route receives the same module; no page registry or adapters.
-                html = re.sub(r'<script\b[^>]*data-prototype-review[^>]*>\s*</script>', '', html)
-                script = f'<script src="{api}review.js" data-prototype-review data-endpoint="{api}" data-base-path="{base_path}/" data-shared="{str(bool(origins)).lower()}" data-codex="{str(bool(codex_tasks)).lower()}"></script>'
+                html = re.sub(r'<script\b[^>]*data-prototype-review[^>]*>\s*</script\s*>', '', html, flags=re.I)
+                script = f'<script src="{api}review.js" data-prototype-review{identity_attributes} data-endpoint="{api}" data-base-path="{base_path}/" data-shared="{str(bool(origins)).lower()}" data-codex="{str(bool(codex_tasks)).lower()}"></script>'
                 html = re.sub(r'(<head\b[^>]*>)', lambda m: m[0] + script, html, count=1, flags=re.I) if re.search(r'<head\b', html, re.I) else script + html
                 return self.send(200, html.encode(), 'text/html; charset=utf-8')
             return self.send_file(target)
