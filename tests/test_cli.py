@@ -37,8 +37,35 @@ class CLITests(unittest.TestCase):
         return result.returncode, json.loads(result.stdout)
 
     def setup(self, *extra, project=None, port=8799):
+        # Comment-only fixtures opt out explicitly; default bridging is tested below.
         return self.cli('setup', '--web-root', 'site', '--data-dir', 'reviews', '--jobs-dir', '.review/jobs',
-                        '--port', str(port), *extra, project=project)
+                        '--port', str(port), '--no-codex', *extra, project=project)
+
+    def test_local_default_enables_codex(self):
+        code, result = self.cli('setup', '--web-root', 'site')
+        self.assertEqual(code, 0, result)
+        self.assertTrue(load_project_config(self.project).codex['enabled'])
+        self.assertFalse((self.project / '.review/jobs').exists())
+
+    def test_repeat_setup_keeps_explicit_codex_opt_out(self):
+        self.assertEqual(self.cli('setup', '--web-root', 'site', '--no-codex')[0], 0)
+        path = self.project / 'review.config.json'
+        original = path.read_bytes()
+        self.assertEqual(self.cli('setup')[0], 0)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertFalse(load_project_config(self.project).codex['enabled'])
+
+    def test_shared_default_disables_codex_without_an_extra_flag(self):
+        code, result = self.cli('setup', '--web-root', 'site', '--host', '0.0.0.0',
+                                '--base-path', '/team', '--public-origin', 'https://reviews.example.test')
+        self.assertEqual(code, 0, result)
+        self.assertFalse(load_project_config(self.project).codex['enabled'])
+
+    def test_shared_explicit_codex_enable_is_rejected(self):
+        code, result = self.cli('setup', '--web-root', 'site', '--host', '0.0.0.0',
+                                '--base-path', '/team', '--public-origin', 'https://reviews.example.test', '--codex')
+        self.assertEqual(code, 2, result)
+        self.assertFalse((self.project / 'review.config.json').exists())
 
     def start(self, config, tasks=None):
         server = make_server(config.web_root, config.data_dir, config.server['port'],
@@ -222,7 +249,8 @@ class CLITests(unittest.TestCase):
 
     def test_serve_launches_configured_external_project(self):
         port = self.free_port()
-        self.assertEqual(self.setup(port=port)[0], 0)
+        self.assertEqual(self.cli('setup', '--web-root', 'site', '--port', str(port),
+                                  '--codex-bin', sys.executable)[0], 0)
         process = subprocess.Popen([sys.executable, str(CLI), '--project', str(self.project), 'serve'],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         output = queue.Queue()
@@ -234,7 +262,13 @@ class CLITests(unittest.TestCase):
             self.assertFalse(ready['reused'])
             with urlopen(f'http://127.0.0.1:{port}/index.html') as response:
                 self.assertIn('Synthetic', response.read().decode())
-            self.assertFalse((self.project / '.review/jobs').exists())
+            with urlopen(f'http://127.0.0.1:{port}/__review/health') as response:
+                self.assertTrue(json.load(response)['codexEnabled'])
+            with urlopen(f'http://127.0.0.1:{port}/__review/codex') as response:
+                bridge = json.load(response)
+            self.assertTrue(bridge['available'])
+            self.assertIsNone(bridge['job'])
+            self.assertFalse((self.project / '.review/jobs/current.json').exists())
         finally:
             process.terminate()
             process.wait(timeout=5)

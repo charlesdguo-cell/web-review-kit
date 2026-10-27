@@ -4,21 +4,23 @@ This workflow belongs to workflowVersion 1 of its release. Installation and priv
 
 HTML reports, static webpages, prototypes and demos delivered for user inspection use this workflow by default under the Skill's delivery rule. Explicit opt-outs and project constraints take precedence. Keep the offline artifact and provide a verified HTTP comment URL; no personal global AGENTS.md edit is needed. An existing frozen worker consumes its batch instead of setting up a new review entry.
 
-Read the consumer's AGENTS.md and project instructions. Confirm the static HTML/build-output directory, source roots, build/check commands, host/port and whether local Codex bridging was requested. Source JSX must be built by the consumer first. This version does not integrate Vite/HMR, Next.js or SSR.
+Read the consumer's AGENTS.md and project instructions. Determine the static HTML/build-output directory, source roots, build/check commands and host/port. Local Codex use includes bridging by default; use comments-only mode for shared/offline review or an explicit opt-out. Source JSX must be built by the consumer first. This version does not integrate Vite/HMR, Next.js or SSR.
 
 For a new unconfigured project, an explicitly selected toolkit checkout/bundle supports:
 
 ```sh
-python3 /absolute/toolkit/web-review.py --project /absolute/consumer setup --web-root public --no-codex
+python3 /absolute/toolkit/web-review.py --project /absolute/consumer setup --web-root public
 ```
 
 Setup creates `review.config.json` only. It does not install a Skill, launch a service or process comments. Existing conflicting configuration returns a diff; preserve the projectId, pin and data and resolve the explicit mismatch. For configured projects use `scripts/review.py --project ... --install-root ... locate`, read that release's `setupWorkflow`, and route CLI commands through that helper.
 
-Set consumer-owned `guidance.requiredFiles`, `sourceRoots`, `buildCommands`, and `checkCommands` in `review.config.json` before enabling worker execution. Paths are relative to the project root unless absolute; commands are argv arrays executed with that root as cwd. Empty defaults do not establish permission to alter arbitrary files or prove that builds/checks are unnecessary. Determine the project's actual contract from its instructions and scope, and record it explicitly. Data/jobs remain outside served output; choose an unused port rather than replacing another service.
+For a new local configuration, setup enables Codex without starting a service or task. `--no-codex` is an explicit opt-out; shared server settings default Codex off and reject explicit enabling. Repeating setup preserves existing settings, including a disabled bridge. Do not present an existing disabled bridge as connected. When bridge activation is requested for an existing project, update its configuration explicitly while preserving identity, pin and evidence.
+
+Set consumer-owned `guidance.requiredFiles`, `sourceRoots`, `buildCommands`, and `checkCommands` in `review.config.json` before starting worker execution. Paths are relative to the project root unless absolute; commands are argv arrays executed with that root as cwd. Determine the project's actual contract from its instructions and scope, and record it explicitly. For plain static HTML with no build step, record that fact rather than inventing a command. Data/jobs remain outside served output; choose an unused port rather than replacing another service.
 
 When the user requests a running review entrypoint, call the pinned `serve` command, verify returned URL/health has the configured projectId, and inspect an HTML page for its injected toolbar using an isolated browser profile. Retain the service lifecycle needed for the user's use. Report the actual process/service state. If the request is configuration only, stop after configuration without serving or processing comments.
 
-For a requested local Codex bridge, configure the executable and optional model explicitly. The authorized worker permissions are `approvalPolicy=never` and `sandbox=danger-full-access`; never modify global settings. Run pinned `doctor`: it checks availability/protocol/auth without inference. `ready=true` is prerequisite readiness, not a running service or successful real job. Then verify the local service's enabled bridge; real job execution requires its own requested comment task. Shared HTTPS and offline review keep Codex disabled.
+For local Codex use, resolve the actual CLI and record its absolute executable path; retain the configured model unless the user requests an override. The authorized worker permissions are `approvalPolicy=never` and `sandbox=danger-full-access`; never modify global settings. Run `doctor`: it checks availability/protocol/auth without inference. Before reporting complete local setup, verify `ready=true`, live health `codexEnabled=true`, GET `__review/codex` with `available=true`, and the actual Codex control in the toolbar. Verify that no job was started by setup. If the CLI, login or handshake is unavailable, explain the specific missing prerequisite rather than silently disabling the bridge or claiming full setup. Real job execution requires a user-requested comment task. Shared HTTPS and offline review keep Codex disabled.
 
 | State to report | Evidence |
 | --- | --- |

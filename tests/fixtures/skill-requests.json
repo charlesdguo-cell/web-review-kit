@@ -10,7 +10,13 @@
     "completionEvidence": [
       "project configuration",
       "explicit service state",
-      "no comments processed"
+      "no comments processed",
+      "local Codex enabled by default",
+      "consumer source/build/check guidance",
+      "doctor ready or explicit missing prerequisite",
+      "live bridge API available",
+      "actual Codex toolbar control",
+      "no model task started by setup"
     ]
   },
   {
@@ -59,7 +65,13 @@
       "matching live review URL",
       "actual toolbar verified",
       "no comments dispatched",
-      "no personal AGENTS.md required"
+      "no personal AGENTS.md required",
+      "local Codex enabled by default",
+      "consumer source/build/check guidance",
+      "doctor ready or explicit missing prerequisite",
+      "live bridge API available",
+      "actual Codex toolbar control",
+      "no model task started by setup"
     ]
   },
   {
@@ -82,6 +94,20 @@
     "completionEvidence": [
       "offline HTML",
       "explicit opt-out respected"
+    ]
+  },
+  {
+    "scenario": "explicit-comments-only",
+    "request": "接入本机评论即可，不要 Codex 处理功能。",
+    "resources": [
+      "consumer instructions",
+      "static HTML directory"
+    ],
+    "expectedEntry": "project-setup-comments-only",
+    "completionEvidence": [
+      "explicit no-codex configuration",
+      "working comment toolbar",
+      "no bridge or model task activated"
     ]
   }
 ]

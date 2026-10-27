@@ -9,7 +9,9 @@ Use the consumer project's pinned tool and accompanying workflow. Preserve origi
 
 For HTML reports, static webpages, interactive prototypes and demos delivered for the user to inspect, provide a working comment entry by default and keep the original artifact readable offline. Respect explicit requests to skip comments and project-specific delivery constraints. Code snippets and non-HTML documents do not require review setup. This default belongs to the distributed Skill; no personal AGENTS.md rule or source-checkout wrapper is required.
 
-For an HTML deliverable, read the consumer's instructions, use its existing review configuration or connect its actual HTML/build-output directory, and follow the project-setup workflow. Serve through the toolkit to inject the toolbar; keep standalone HTML/offline assets intact. Before delivery verify the HTTP page, matching project health and the actual toolbar, then return the review URL and offline file link. Installation or setup alone does not establish a working review entry. Preparing an entry does not process pending comments or enable an unrequested bridge.
+For an HTML deliverable, read the consumer's instructions, use its existing review configuration or connect its actual HTML/build-output directory, and follow the project-setup workflow. Local Codex use includes the bridge by default: configure the real source/build/check guidance and executable, run doctor, then verify the page, matching health, bridge API and actual Codex control in the toolbar. Shared/offline review and an explicit Codex opt-out use comments only. Keep standalone HTML/offline assets intact and return the review URL and offline file link. Missing CLI, login or handshake must be reported; a comment toolbar alone is not a complete local Codex setup. Preparing the bridge never dispatches pending comments automatically.
+
+Describe progress through the comment being handled, the problem found and the actual result. Keep tool-version and workflow mechanics for troubleshooting when relevant.
 
 An already dispatched worker follows only its frozen batch and executionConfig; HTML delivery defaults do not expand that task.
 

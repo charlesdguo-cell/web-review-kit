@@ -177,6 +177,10 @@ def setup_project(project_root: Path, options: dict):
     if diff:
         raise ConfigError('Existing configuration differs; resolve review.config.json explicitly before retrying',
                           3, 'configuration_conflict', diff)
+    if not existing and options.get('codex') is None:
+        server = raw['server']
+        shared = bool(server['publicOrigins'] or server['basePath'] or server['host'] != '127.0.0.1')
+        raw['codex']['enabled'] = not shared
     config = _validated(root, raw)
     if existing:
         return config, False

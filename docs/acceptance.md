@@ -1,5 +1,13 @@
 # Core acceptance · 2026-10-27
 
+## rc.5 default local bridge correction · 2026-10-27
+
+`0.1.0-rc.5` corrects new local setup to enable Codex bridging by default. Shared server settings still default off, explicit `--no-codex` remains off, and repeat setup preserves existing project settings. Skill/setup/release instructions now require consumer guidance, actual executable discovery, doctor readiness, matching bridge health/API and the visible Codex control before reporting complete local delivery. Progress guidance focuses on the user's comment and result.
+
+The default-off regression was reproduced by two failing CLI checks before the change. Afterward: **145 unittest tests OK in 82.380s**, original isolated browser suite **29 passed**, and the final doctor suite **8 passed**. A clean rc.5 package install (including repeat install and global discovery) created a fresh synthetic project with no Codex-enable flag, checked real Codex CLI 0.162.1 App Server handshake and authentication through read-only doctor, verified `ready=true`, HTTP `codexEnabled=true`, bridge API `available=true`, the actual Codex toolbar control ready to dispatch, saved comment and original screenshot, and unchanged offline HTML. No model thread/turn or comment job was started by this check.
+
+Tests use component-owned temporary fixtures. Existing consumer projects, their services, configuration, comments and historical tasks were outside this change and were not modified. Evidence is retained in ignored `artifacts/releases/0.1.0-rc.5/`. Older acceptance sections describe their own release snapshots.
+
 ## rc.4 distribution follow-up · 2026-10-27
 
 `0.1.0-rc.4` distributes the HTML report/page/prototype/demo delivery default inside the standard `web-review` Skill and documents global installation. Maintainers and teammates use the identical complete release; the temporary source-checkout wrapper and personal AGENTS.md delivery rule are no longer needed. Existing configured projects keep their pins and frozen tasks. All runtime files remain byte-identical to rc.3; no data/schema migration or real Codex task was run for this follow-up.

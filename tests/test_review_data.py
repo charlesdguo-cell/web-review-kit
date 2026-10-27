@@ -25,7 +25,7 @@ class ReviewDataTests(unittest.TestCase):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
-        self.config, _ = setup_project(self.root, {'port': port})
+        self.config, _ = setup_project(self.root, {'port': port, 'codex': False})
         self.server = make_server(self.root, self.config.data_dir, port, project_config=self.config)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

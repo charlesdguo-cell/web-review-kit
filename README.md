@@ -13,15 +13,15 @@ Install the [web-review Skill](skills/web-review/SKILL.md) globally using the [s
 Use Python 3.9+ on macOS. Build source JSX with the consumer's own build first; framework development servers, Vite/HMR and SSR are outside this version.
 
 ```sh
-python3 /absolute/web-review-kit/web-review.py --project /absolute/consumer setup --web-root public --no-codex
+python3 /absolute/web-review-kit/web-review.py --project /absolute/consumer setup --web-root public
 python3 /absolute/web-review-kit/web-review.py --project /absolute/consumer serve
 ```
 
-Setup writes only `review.config.json`. It preserves an existing project identity/pin and rejects conflicting explicit options with a diff. Serve reports its URL and reuses only the exact configured service; it does not replace an unrelated port/data owner. Open the returned URL and verify the injected review toolbar. Data and jobs must remain outside served output. Preserve the complete data directory, including screenshots, attachments and metadata.
+New local setup enables Codex bridging by default; use `--no-codex` for an explicit comments-only entry. Shared setup defaults to Codex off. Setup writes only `review.config.json`, starts no task, preserves an existing project's settings/pin and rejects conflicting explicit options with a diff. Serve reports its URL and reuses only the exact configured service; it does not replace an unrelated port/data owner. Open the returned URL and verify the injected review toolbar. Data and jobs must remain outside served output. Preserve the complete data directory, including screenshots, attachments and metadata.
 
 Report four separate outcomes: **installed/discoverable** tool and Skill files; **configured** project identity/paths/pin/guidance; **bridge ready** configured local Codex prerequisites and successful doctor; **running** live matching service and verified toolbar. None implies the next. A local source checkout is not a verified release installation.
 
-Before enabling a requested local Codex bridge, fill the consumer-owned `guidance.requiredFiles`, `sourceRoots`, `buildCommands`, and `checkCommands` in its configuration. Commands are argv arrays executed at the consumer root. Configure Codex executable/model and enabled state explicitly, then run `doctor`; it checks environment, App Server protocol and login without inference. Workers receive immutable executionConfig and frozen comments, use the bundled Skill directly and never recursively dispatch. The bridge uses `approvalPolicy=never` and `sandbox=danger-full-access` without changing global configuration. Enabling prerequisites does not authorize an unrequested real comment task.
+For complete local Codex setup, fill the consumer-owned `guidance.requiredFiles`, `sourceRoots`, `buildCommands`, and `checkCommands` and resolve the absolute Codex executable. Commands are argv arrays executed at the consumer root. Run `doctor` to check environment, App Server protocol and login without inference; verify live bridge health/API and the actual toolbar control as well. Report missing prerequisites explicitly. Workers receive immutable executionConfig and frozen comments, use the bundled Skill directly and never recursively dispatch. The bridge uses `approvalPolicy=never` and `sandbox=danger-full-access` without changing global configuration. Enabling prerequisites does not authorize an unrequested real comment task.
 
 ```sh
 python3 /absolute/web-review-kit/web-review.py --project /absolute/consumer doctor

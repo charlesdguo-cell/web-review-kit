@@ -95,6 +95,16 @@ class CodexDoctorTests(unittest.TestCase):
         self.assertFalse(result['capabilities']['codex']); self.assertFalse(result['ready'])
         self.assertFalse((self.root / 'rpc.jsonl').exists())
 
+    def test_missing_cli_reports_unready_without_disabling_configuration(self):
+        config = dataclasses.replace(self.config, codex={**self.config.codex,
+                                                       'executable': str(self.root / 'missing-codex')})
+        result = doctor(config)
+        self.assertFalse(result['ready'])
+        self.assertFalse(self.checks(result)['cli']['ok'])
+        self.assertFalse(result['capabilities']['codex'])
+        self.assertTrue(config.codex['enabled'])
+        self.assertFalse((self.root / 'rpc.jsonl').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
