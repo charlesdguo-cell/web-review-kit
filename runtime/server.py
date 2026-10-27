@@ -449,10 +449,12 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
 
 def configured_health(config):
     """Local identity includes resolved directories; shared identity exposes no paths."""
+    from project_config import TOOL_VERSION
     fingerprint = hashlib.sha256(json.dumps(asdict(config), default=str, sort_keys=True,
                                           separators=(',', ':')).encode()).hexdigest()
     health = {'service': 'prototype-review', 'projectId': config.project_id,
-              'toolVersion': config.tool_version, 'schemaVersion': 1,
+              'toolVersion': TOOL_VERSION, 'requiredToolVersion': config.tool_version,
+              'versionMatches': TOOL_VERSION == config.tool_version, 'schemaVersion': 1,
               'configurationHash': fingerprint,
               'server': {name: config.server[name] for name in ('host', 'port', 'basePath', 'publicOrigins')},
               'codexEnabled': config.codex['enabled']}
@@ -463,7 +465,14 @@ def configured_health(config):
 
 def serve_project(config: 'ProjectConfig') -> None:
     """Start the configured project or reuse only its exact existing service."""
-    from project_config import ConfigError
+    from project_config import ConfigError, TOOL_VERSION
+    if config.tool_version != TOOL_VERSION:
+        raise ConfigError('Actual runtime VERSION differs from project requirement', 3, 'version_conflict')
+    if (TOOLS.parent / 'release-manifest.json').exists():
+        from release_manager import installed_root, resolve_project_release
+        install = installed_root(TOOLS.parent)
+        if resolve_project_release(config.project_root, install) != TOOLS.parent:
+            raise ConfigError('Service runtime differs from verified project release', 3, 'version_conflict')
     options = config.server
     tasks = None
     if config.codex['enabled']:
@@ -471,7 +480,8 @@ def serve_project(config: 'ProjectConfig') -> None:
         tasks = CodexTasks(config.project_root, config.data_dir, config.jobs_dir,
                            config.codex['executable'], execution_config=execution_config_for(config))
     url = f"http://127.0.0.1:{options['port']}{options['basePath']}/"
-    result = {'ok': True, 'projectId': config.project_id, 'toolVersion': config.tool_version,
+    result = {'ok': True, 'projectId': config.project_id, 'toolVersion': TOOL_VERSION,
+              'requiredToolVersion': config.tool_version, 'versionMatches': True,
               'command': 'serve', 'url': url}
     try:
         server = make_server(config.web_root, config.data_dir, options['port'],
@@ -492,6 +502,15 @@ def serve_project(config: 'ProjectConfig') -> None:
             return
         raise ConfigError('Data directory or port is owned by another service, project or configuration',
                           3, 'service_conflict')
+    # Lock is held: reject a pin changed between resolution and service startup.
+    from project_config import load_project_config
+    try:
+        current = load_project_config(config.project_root)
+        if current.project_id != config.project_id or current.tool_version != config.tool_version:
+            raise ConfigError('Project pin/identity changed during service startup', 3, 'version_conflict')
+    except BaseException:
+        server.server_close()
+        raise
     print(json.dumps({**result, 'reused': False}, ensure_ascii=False), flush=True)
     try:
         server.serve_forever()

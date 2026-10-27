@@ -2,7 +2,7 @@
 
 Private team toolkit for static HTML and build output: element, region and text comments, original screenshots, attachments, optimistic updates, offline export and shared HTTP review. The current checkout version is in [VERSION](VERSION). Runtime source lives only in `runtime/`; consumer copies are installed artifacts.
 
-The configured CLI, cross-project identity, guarded review operations, local Codex bridge, environment doctor and reusable [web-review Skill](skills/web-review/SKILL.md) are implemented. Private release packaging, installation/update/rollback and the production pinned-release resolver are pending the release task. The Skill router fails explicitly until that resolver and the required pinned release exist; it never downloads or selects a newest release. Real Codex end-to-end acceptance remains a later task. Local protocol tests do not establish real job success or user design acceptance.
+The configured CLI, cross-project identity, guarded review operations, local Codex bridge, environment doctor and reusable [web-review Skill](skills/web-review/SKILL.md) are implemented. Deterministic private release packaging, explicit installation/update/rollback and the verified pinned-release resolver are implemented. Start with the [exact candidate installation guide](docs/releases.md); installation never downloads a newest version, changes consumer pins or modifies global agent configuration implicitly. Real Codex end-to-end acceptance remains a later task. Local protocol tests do not establish real job success or user design acceptance.
 
 ## Configure and serve
 
@@ -31,9 +31,9 @@ For a configured installed project, use the [Skill helper](skills/web-review/scr
 python3 /absolute/skill/scripts/review.py --project /absolute/consumer --install-root /absolute/installation locate
 ```
 
-Read the returned version-specific workflow path. Until release installation exists, raw checkout CLI commands below are development interfaces: `version` reports the actual checkout version, not proof that a project's pin was resolved. Do not infer that a newer checkout is safe for an older configured pin.
+Read the returned version-specific workflow path. Raw checkout CLI commands remain development interfaces: `version` reports actual and required versions plus whether this is a verified installation. Do not infer that a newer checkout is safe for an older configured pin.
 
-Available CLI commands are `setup`, `doctor`, `serve`, `version`, `list`, `show`, `export`, and `mark-changed`. `update`/`rollback` are pending release work. Commands return structured JSON or the service lifecycle result; errors distinguish unavailable configuration/capability (2) and version/project/concurrency conflicts (3).
+Available CLI commands are `setup`, `doctor`, `serve`, `version`, `list`, `show`, `export`, and `mark-changed`. `update`/`rollback` activate an explicit installed `--target` while the service and jobs are stopped; see [release commands](docs/releases.md). Commands return structured JSON or the service lifecycle result; errors distinguish unavailable configuration/capability (2) and version/project/concurrency conflicts (3).
 
 ```sh
 python3 /absolute/toolkit/web-review.py --project /absolute/consumer show --id comment-ID
@@ -64,4 +64,4 @@ ruby tests/browser/verify-attachments.rb
 ruby tests/browser/verify-shared.rb
 ```
 
-The discovery suite includes the Codex browser protocol fixture; separately use `PYTHONPATH=runtime python3 tests/test_codex_browser.py`. Router tests use a stub resolver until release management exists and cover an older project pin with a newer host, incompatible/missing release rejection, frozen requests and isolated Skill discovery/invocation. See [source provenance](docs/source-map.md), [repository rules](AGENTS.md) and the Skill's [setup](skills/web-review/references/project-setup.md) and [comment workflow](skills/web-review/references/comment-workflow.md). This round formally validates macOS only.
+The discovery suite includes the Codex browser protocol fixture; separately use `PYTHONPATH=runtime python3 tests/test_codex_browser.py`. Router boundary tests use isolated stub resolvers; release tests also exercise the real packaged resolver. They cover an older project pin with a newer host, incompatible/missing release rejection, frozen requests and isolated Skill discovery/invocation. See [source provenance](docs/source-map.md), [repository rules](AGENTS.md) and the Skill's [setup](skills/web-review/references/project-setup.md) and [comment workflow](skills/web-review/references/comment-workflow.md). This round formally validates macOS only.

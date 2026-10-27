@@ -13,7 +13,9 @@ Use the consumer project's pinned tool and accompanying workflow. Preserve origi
 | Current conversation | User names comments to handle here | Locate the pinned release, then read its `commentWorkflow` |
 | Existing worker | Already dispatched with frozen comments/request.json | Locate with `--request`, then read its `commentWorkflow`; consume this batch directly |
 
-For a configured project, run the bundled helper through Python:
+Installation/bootstrap and explicit project-local discovery commands are in the same release's [release guide](../../docs/releases.md). Install returns the verified absolute `installRoot`; keep it with the installation instructions. A discovered symlink remains attached to its complete `INSTALL/releases/VERSION` bundle, allowing the helper to derive that exact root with receipt verification. It never searches for a newest version. A configured packaged worker also receives `executionConfig.installRoot`, `skillPath` and the absolute frozen request path in its prompt.
+
+For a configured project, run the bundled helper through Python (omit `--install-root` only when using the verified layout above):
 
 ```sh
 python3 /absolute/path/to/skills/web-review/scripts/review.py --project /absolute/consumer --install-root /absolute/installation locate

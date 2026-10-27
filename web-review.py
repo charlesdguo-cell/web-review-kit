@@ -5,12 +5,28 @@ import json
 from pathlib import Path
 import sys
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'runtime'))
 from project_config import ConfigError, TOOL_VERSION, load_project_config, setup_project
 from server import serve_project
 from review_data import ReviewClient, ReviewDataError
 from data_lock import DataLockError
 from data_version import DataVersionError
+from release_manager import ReleaseError, activate_release, installed_root
+
+
+def runtime_status(config=None):
+    root = Path(__file__).resolve().parent
+    required = config.tool_version if config else None
+    workflow = json.loads((root / 'skills/web-review/workflow.json').read_text())
+    compatible = type(workflow.get('workflowVersion')) is int and workflow['workflowVersion'] == 1
+    installed = False
+    if (root / 'release-manifest.json').exists():
+        installed_root(root)
+        installed = True
+    return {'requiredToolVersion': required, 'versionMatches': required in (None, TOOL_VERSION),
+            'workflowVersion': workflow.get('workflowVersion'), 'workflowCompatible': compatible,
+            'verifiedInstallation': installed}
 
 
 class Parser(argparse.ArgumentParser):
@@ -34,6 +50,9 @@ def main(argv=None):
     commands.add_parser('serve', help='Serve the configured project')
     commands.add_parser('version', help='Report toolkit version')
     commands.add_parser('doctor', help='Check environment, protocol and auth without inference')
+    for name in ('update', 'rollback'):
+        switch = commands.add_parser(name, help='Activate an explicitly installed release while service/jobs are stopped')
+        switch.add_argument('--target', type=Path, required=True)
     commands.add_parser('list', help='List reviews from the configured service')
     show = commands.add_parser('show', help='Read a frozen review snapshot')
     show.add_argument('--id', required=True)
@@ -52,21 +71,31 @@ def main(argv=None):
         if args.command == 'version':
             if (args.project / 'review.config.json').exists():
                 config = load_project_config(args.project)
-            value = {'command': 'version'}
+            value = {'command': 'version', **runtime_status(config)}
         elif args.command == 'setup':
+            result.update(runtime_status())
             if (args.project / 'review.config.json').exists():
                 config = load_project_config(args.project)
             config, created = setup_project(args.project, vars(args))
             value = {'command': 'setup', 'created': created}
         else:
             config = load_project_config(args.project)
+            status = runtime_status(config)
+            result.update(status)
+            if args.command in ('update', 'rollback'):
+                value = activate_release(config, args.target)
+                value.update(command=args.command, runningToolVersion=TOOL_VERSION)
+                print(json.dumps(value, ensure_ascii=False), flush=True)
+                return 0
+            if args.command != 'doctor' and (not status['versionMatches'] or not status['workflowCompatible']):
+                raise ReleaseError('Runtime version/workflow differs from project requirement', 'version_conflict')
             if args.command == 'serve':
                 serve_project(config)
                 return 0
             if args.command == 'doctor':
                 from codex_doctor import doctor
                 value = {'command': 'doctor', **doctor(config)}
-                result.update(ok=value['ready'], projectId=config.project_id, toolVersion=config.tool_version, **value)
+                result.update(ok=value['ready'], projectId=config.project_id, **value)
                 print(json.dumps(result, ensure_ascii=False), flush=True)
                 return 0 if value['ready'] else 2
             base_url = args.review_url if args.review_url is not None else 'http://127.0.0.1:' + str(config.server['port']) + config.server['basePath']
@@ -90,7 +119,7 @@ def main(argv=None):
                 value['comment'] = client.mark_changed(snapshot, resolution)
         result.update(ok=True, **value)
         return_code = 0
-    except (ReviewDataError, DataLockError, DataVersionError) as error:
+    except (ReviewDataError, DataLockError, DataVersionError, ReleaseError) as error:
         result.update(error=error.code, message=str(error))
         return_code = error.exit_code
     except ConfigError as error:
@@ -103,8 +132,7 @@ def main(argv=None):
         return_code = 2
     if config:
         result.update(projectId=config.project_id)
-        if args.command != 'version':
-            result['toolVersion'] = config.tool_version
+        result.update(requiredToolVersion=config.tool_version, versionMatches=config.tool_version == TOOL_VERSION)
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return return_code
 

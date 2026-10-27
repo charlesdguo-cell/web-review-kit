@@ -77,9 +77,17 @@ def execution_config_for(config):
     codex = {'approvalPolicy': 'never', 'sandbox': 'danger-full-access'}
     if config.codex.get('model'):
         codex['model'] = config.codex['model']
-    return {'projectId': config.project_id, 'toolVersion': config.tool_version,
+    result = {'projectId': config.project_id, 'toolVersion': config.tool_version,
             'guidance': copy.deepcopy(config.guidance), 'codex': codex,
             'skillPath': str(skill_path())}
+    release = Path(__file__).resolve().parent.parent
+    if (release / 'release-manifest.json').exists():
+        from release_manager import installed_root, resolve_project_release
+        install = installed_root(release)
+        if resolve_project_release(config.project_root, install) != release:
+            raise ValueError('Worker runtime differs from the project pin')
+        result['installRoot'] = str(install)
+    return result
 
 
 class TaskConflict(Exception):
@@ -183,7 +191,8 @@ class CodexTasks:
             try:
                 write_json(directory / 'status.json', job)
                 request = {'project': str(self.project), 'data': str(self.data),
-                           'reviewUrl': review_url, 'executable': self.executable, 'comments': comments}
+                           'reviewUrl': review_url, 'executable': self.executable, 'comments': comments,
+                           'requestPath': str(directory / 'request.json')}
                 if self.execution_config is not None:
                     request['executionConfig'] = copy.deepcopy(self.execution_config)
                 write_json(directory / 'request.json', request)
@@ -284,6 +293,9 @@ def prompt_for(request):
 项目目录：{request['project']}
 项目标识：{execution.get('projectId', '')}
 工具版本：{execution.get('toolVersion', '')}
+已验证安装根目录（helper --install-root）：{execution.get('installRoot', '源码开发入口，未验证安装')}
+固定版本 Skill：{execution.get('skillPath', '')}
+冻结请求文件（helper --request）：{request.get('requestPath', '使用本次提供的 request.json')}
 评审入口：{request['reviewUrl']}
 评论数据目录：{request['data']}
 项目必读文件：{json.dumps(guidance.get('requiredFiles', []), ensure_ascii=False)}

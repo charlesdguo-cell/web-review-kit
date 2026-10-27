@@ -1,6 +1,6 @@
 # Connect a static project
 
-This workflow belongs to workflowVersion 1 of its release. Installation and private release retrieval are separate from project setup. The release manager/installer is a later capability until present in the selected distribution; do not invent an install command, auto-download a missing pin, or label a checkout as a verified release installation.
+This workflow belongs to workflowVersion 1 of its release. Installation and private release retrieval are separate from project setup. First install the exact authorized candidate using the bundled [release guide](../../../docs/releases.md), which documents private GitHub bootstrap, checksum validation, explicit install root and optional project-local Skill discovery. Installation returns the absolute `installRoot`; the complete installed helper can also derive it from its verified release directory. Do not guess a machine path, choose latest or download a missing pin during comment processing. For “connect webpage review”, provide a running URL when the user requests a usable entry; configuration-only requests stop after setup. Toolbar/health verification is required before reporting running.
 
 Read the consumer's AGENTS.md and project instructions. Confirm the static HTML/build-output directory, source roots, build/check commands, host/port and whether local Codex bridging was requested. Source JSX must be built by the consumer first. This version does not integrate Vite/HMR, Next.js or SSR.
 

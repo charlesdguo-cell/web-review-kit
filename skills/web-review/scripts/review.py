@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+sys.dont_write_bytecode = True
 
 HOST_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_VERSION = 1
@@ -119,7 +120,7 @@ def main(argv=None):
     try:
         parser = Parser(description=__doc__)
         parser.add_argument('--project', type=Path, required=True)
-        parser.add_argument('--install-root', type=Path, required=True, help='Verified release installation root')
+        parser.add_argument('--install-root', type=Path, help='Explicit installation root; otherwise derive only from verified releases/VERSION layout')
         parser.add_argument('--request', type=Path, help='Existing immutable worker request; does not start a job')
         parser.add_argument('--review-url', help='Explicit service base URL; CLI verifies projectId before data access')
         parser.add_argument('command', choices=sorted(CLI_COMMANDS | {'locate', 'snapshot'}))
@@ -127,7 +128,16 @@ def main(argv=None):
         args = parser.parse_args(argv)
         if args.request and args.command not in WORKER_COMMANDS:
             raise RouterError('Existing workers only consume their batch; setup/service/version changes are separate operations', 'invalid_arguments')
-        project, install = args.project.resolve(), args.install_root.resolve()
+        project = args.project.resolve()
+        if args.install_root:
+            install = args.install_root.expanduser().resolve()
+        else:
+            sys.path.insert(0, str(HOST_ROOT / 'runtime'))
+            try:
+                from release_manager import installed_root
+            except ImportError as error:
+                raise RouterError('Complete installed bundle required to derive install root', 'resolver_unavailable') from error
+            install = installed_root(HOST_ROOT)
         # Setup alone bootstraps an unconfigured project from this explicitly selected bundle.
         # Configured projects, including repeated setup, always use the project's pin.
         if args.command == 'setup' and not (project / 'review.config.json').exists():
@@ -138,7 +148,10 @@ def main(argv=None):
             release = resolve_release(project, install)
         result.update(identity)
         description = describe_release(release, identity)
+        description['installRoot'] = str(install)
         request = frozen_request(args.request, project, identity, description, args.review_url) if args.request else None
+        if request and request['executionConfig'].get('installRoot', str(install)) != str(install):
+            raise RouterError('Frozen installRoot differs from verified installation', 'request_conflict', 3)
         review_url = request['reviewUrl'] if request else args.review_url
         if args.command == 'locate':
             if args.arguments:

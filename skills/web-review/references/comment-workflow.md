@@ -2,6 +2,8 @@
 
 This is workflowVersion 1. Follow the **selected release's** workflow. All commands below use the helper from the discovered Skill with `--project /absolute/consumer --install-root /absolute/installation` before the command. `locate` names the exact runtime and references. Missing/incompatible releases stop processing; do not swap in another version.
 
+Use the installer's returned absolute `installRoot`, or the worker's frozen `executionConfig.installRoot`. With a complete installed Skill symlink the helper can derive that same verified root; omit the flag only in that case. Bootstrap/discovery is documented in [releases](../../../docs/releases.md); a missing installation during comment work must be reported, never repaired by an unrequested download or upgrade.
+
 ## Establish the batch and consumer contract
 
 Current conversation: read `review.config.json`, project AGENTS.md and `guidance.requiredFiles`; use its `sourceRoots`, `buildCommands`, `checkCommands`, running URL and data path. Call `show --id comment-ID` once for each user-selected record and save the entire successful JSON envelope to a new external temporary snapshot file. Verify `ok=true`, projectId and the requested comment id before using it. Do not overwrite that snapshot on later reads. `list` may discover explicitly requested scope, but do not silently add more work.

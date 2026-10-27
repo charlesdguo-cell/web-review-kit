@@ -1,5 +1,6 @@
 """Read-only environment and App Server readiness; never starts a model turn."""
 import os
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -8,7 +9,7 @@ import tempfile
 from codex_session import AppServer
 from codex_tasks import resolve_executable, skill_path
 from data_version import inspect_data_version
-from project_config import ProjectConfig
+from project_config import ProjectConfig, TOOL_VERSION
 
 
 def _writable_destination(path):
@@ -23,6 +24,20 @@ def doctor(config: ProjectConfig) -> dict:
 
     def check(name, ok, detail):
         checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
+
+    version_ok = config.tool_version == TOOL_VERSION
+    check('runtimeVersion', version_ok, 'Actual ' + TOOL_VERSION + '; required ' + config.tool_version)
+    root = Path(__file__).resolve().parent.parent
+    try:
+        workflow = json.loads((root / 'skills/web-review/workflow.json').read_text())
+        workflow_ok = type(workflow.get('workflowVersion')) is int and workflow['workflowVersion'] == 1
+        if (root / 'release-manifest.json').exists():
+            from release_manager import installed_root
+            installed_root(root)
+        check('workflow', workflow_ok, 'Bundled workflowVersion must be 1; installed manifests and receipts are verified')
+    except (OSError, ValueError):
+        workflow_ok = False
+        check('workflow', False, 'Release integrity or Skill workflow is unavailable')
 
     shared = bool(config.server['publicOrigins'] or config.server['basePath'] or config.server['host'] != '127.0.0.1')
     local_enabled = config.codex['enabled'] and not shared
@@ -47,7 +62,7 @@ def doctor(config: ProjectConfig) -> dict:
     path = skill_path()
     skill_ok = path.is_absolute() and path.is_file() and os.access(path, os.R_OK)
     check('skill', skill_ok, 'web-review skill readable' if skill_ok else 'web-review skill missing or unreadable in this toolkit version')
-    if executable and local_enabled and environment_ok:
+    if executable and local_enabled and environment_ok and version_ok and workflow_ok:
         client = None
         try:
             result = subprocess.run([executable, '--version'], cwd=config.project_root,
@@ -75,7 +90,8 @@ def doctor(config: ProjectConfig) -> dict:
             else:
                 check('authentication', False, 'Account status unavailable through the supported account/read interface')
     ready = all(item['ok'] for item in checks)
-    return {'checks': checks, 'ready': ready,
-            'capabilities': {'review': bool(environment_ok and data_ok),
+    return {'checks': checks, 'ready': ready, 'toolVersion': TOOL_VERSION,
+            'requiredToolVersion': config.tool_version, 'versionMatches': version_ok,
+            'capabilities': {'review': bool(environment_ok and data_ok and version_ok and workflow_ok),
                              'codex': bool(ready and local_enabled), 'sharedReview': shared,
                              'modelTaskVerified': False}}

@@ -44,7 +44,7 @@ The attachments check retains its paste, pure-image, preview, cancel, retry, exp
 - Ruby 2.6.10, standard library only (CDP WebSocket client, PNG fixture uses `zlib`).
 - Google Chrome 156.0.8078.48 on macOS arm64; isolated headless browser profiles, optional `CHROME_BIN`.
 - html2canvas-pro **2.4.2**, fixed vendored build and MIT license copied unchanged. Its SHA-256 appears above. The inherited patch adds `node.ownerDocument.defaultView.getComputedStyle(node).isolation === 'isolate'` to the real stacking-context decision, preserving negative-z-index pseudo-element images over parent backgrounds. This check is exercised by the synthetic `.photo` fixture.
-- No install, network fetch, package manager, API key or real Codex account is needed for tests. GitHub identity/repository discovery was read only; no remote exists at this stage.
+- No install, network fetch, package manager, API key or real Codex account is needed for tests. Task 1 GitHub discovery was read only. Candidate release provenance and later private publication are recorded separately in the release evidence; this extraction baseline is historical.
 
 ## Deferred baseline limitations
 
