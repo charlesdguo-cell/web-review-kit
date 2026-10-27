@@ -2,6 +2,7 @@
 """Serve any static prototype with persistent reviews, locally or behind HTTPS Nginx."""
 import argparse
 import base64
+from dataclasses import asdict
 import errno
 import hashlib
 import json
@@ -14,7 +15,11 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
+from typing import TYPE_CHECKING
 import webbrowser
+
+if TYPE_CHECKING:
+    from project_config import ProjectConfig
 
 TOOLS = Path(__file__).resolve().parent
 PROJECT = TOOLS.parent.parent
@@ -66,7 +71,7 @@ def atomic_json(path, value):
     os.replace(temporary, path)
 
 
-def make_server(root, data, port, base_path='', public_origins=(), bind_host='127.0.0.1', codex_tasks=None):
+def make_server(root, data, port, base_path='', public_origins=(), bind_host='127.0.0.1', codex_tasks=None, project_config=None):
     root, data = Path(root).resolve(), Path(data).resolve()
     base_path = '/' + base_path.strip('/') if base_path.strip('/') else ''
     if base_path and not re.fullmatch(r'(?:/[a-zA-Z0-9_-]+)+', base_path):
@@ -80,6 +85,13 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
         parts = urlsplit(origin)
         if parts.scheme != 'https' or not parts.netloc or parts.path or parts.query or parts.fragment or parts.username:
             raise ValueError('public-origin 必须是 HTTPS 域名，不包含路径')
+    if project_config is not None:
+        requested = project_config.server
+        if (root != project_config.web_root or data != project_config.data_dir or
+                port != requested['port'] or bind_host != requested['host'] or
+                base_path != requested['basePath'] or origins != set(requested['publicOrigins']) or
+                bool(codex_tasks) != project_config.codex['enabled']):
+            raise ValueError('Server arguments do not match project configuration')
     api = base_path + '/__review/'
     lock = threading.Lock()
     manifest = data / 'comments.json'
@@ -211,6 +223,11 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 with lock:
                     return self.send(200, {'comments': [self.public_record(c) for c in records()], 'storage': '服务器共享评审' if origins else str(manifest), 'build': build_id()})
             if path == '/__review/health':
+                if project_config is not None:
+                    health = configured_health(project_config)
+                    if origins:
+                        health['build'] = build_id()
+                    return self.send(200, health)
                 if origins:
                     return self.send(200, {'service': 'prototype-review', 'build': build_id()})
                 return self.send(200, {'service': 'prototype-review', 'root': str(root), 'data': str(data)})
@@ -356,6 +373,61 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 return self.send(500, {'error': '本机任务暂时无法启动，请查看服务日志。'})
 
     return ReviewHTTPServer((bind_host, port), Handler)
+
+
+def configured_health(config):
+    """Local identity includes resolved directories; shared identity exposes no paths."""
+    fingerprint = hashlib.sha256(json.dumps(asdict(config), default=str, sort_keys=True,
+                                          separators=(',', ':')).encode()).hexdigest()
+    health = {'service': 'prototype-review', 'projectId': config.project_id,
+              'toolVersion': config.tool_version, 'schemaVersion': 1,
+              'configurationHash': fingerprint,
+              'server': {name: config.server[name] for name in ('host', 'port', 'basePath', 'publicOrigins')},
+              'codexEnabled': config.codex['enabled']}
+    if not config.server['publicOrigins']:
+        health.update(root=str(config.web_root), data=str(config.data_dir))
+    return health
+
+
+def serve_project(config: 'ProjectConfig') -> None:
+    """Start the configured project or reuse only its exact existing service."""
+    from project_config import ConfigError
+    options = config.server
+    tasks = None
+    if config.codex['enabled']:
+        from codex_tasks import CodexTasks
+        # The project-aware prompt/model bridge is owned by the later bridge task.
+        tasks = CodexTasks(config.project_root, config.data_dir, config.jobs_dir,
+                           config.codex['executable'])
+    url = f"http://127.0.0.1:{options['port']}{options['basePath']}/"
+    result = {'ok': True, 'projectId': config.project_id, 'toolVersion': config.tool_version,
+              'command': 'serve', 'url': url}
+    try:
+        server = make_server(config.web_root, config.data_dir, options['port'],
+                             options['basePath'], options['publicOrigins'], options['host'],
+                             tasks, project_config=config)
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE:
+            raise
+        try:
+            with urlopen(url + '__review/health', timeout=2) as response:
+                health = json.load(response)
+        except (OSError, ValueError):
+            health = {}
+        # Shared health also has a content build hash. It is not a service identity.
+        expected = configured_health(config)
+        if health and {k: v for k, v in health.items() if k != 'build'} == expected:
+            print(json.dumps({**result, 'reused': True}, ensure_ascii=False), flush=True)
+            return
+        raise ConfigError('Port is occupied by another service, project or configuration; choose a different port',
+                          3, 'service_conflict')
+    print(json.dumps({**result, 'reused': False}, ensure_ascii=False), flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
 
 
 def main():
