@@ -124,6 +124,31 @@ class CLITests(unittest.TestCase):
         self.assertTrue(result['toolVersion'])
         self.assertIn('projectId', result)
 
+    def test_explicit_review_url_keeps_frozen_endpoint_and_checks_identity(self):
+        port = self.free_port()
+        self.setup(port=port)
+        config = load_project_config(self.project)
+        self.start(config)
+        path = self.project / 'review.config.json'
+        raw = json.loads(path.read_text())
+        raw['server']['port'] = self.free_port()
+        path.write_text(json.dumps(raw))
+        url = 'http://127.0.0.1:' + str(port)
+        code, result = self.cli('--review-url', url, 'list')
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result['comments'], [])
+        raw['projectId'] = 'wrong-project'
+        path.write_text(json.dumps(raw))
+        code, result = self.cli('--review-url', url, 'list')
+        self.assertEqual((code, result['error']), (3, 'project_conflict'))
+
+    def test_explicit_review_url_is_not_a_service_or_setup_override(self):
+        self.setup()
+        for command in ('serve', 'setup', 'doctor', 'version'):
+            with self.subTest(command=command):
+                code, result = self.cli('--review-url', 'http://127.0.0.1:1', command)
+                self.assertEqual((code, result['error']), (2, 'invalid_arguments'))
+
     def test_setup_shared_and_codex_permissions(self):
         code, _ = self.setup('--host', '0.0.0.0', '--base-path', '/team/review',
                              '--public-origin', 'https://reviews.example.test')

@@ -21,6 +21,7 @@ class Parser(argparse.ArgumentParser):
 def main(argv=None):
     parser = Parser(description=__doc__)
     parser.add_argument('--project', type=Path, default=Path.cwd())
+    parser.add_argument('--review-url', help='Explicit review service base URL; data operations verify its projectId')
     commands = parser.add_subparsers(dest='command', required=True, parser_class=Parser)
     setup = commands.add_parser('setup', help='Create project configuration without starting a service')
     for flag in ('web-root', 'data-dir', 'jobs-dir', 'host', 'base-path', 'codex-bin', 'model'):
@@ -46,6 +47,8 @@ def main(argv=None):
     result = {'ok': False, 'projectId': None, 'toolVersion': TOOL_VERSION}
     try:
         args = parser.parse_args(argv)
+        if args.review_url is not None and args.command not in ('list', 'show', 'export', 'mark-changed'):
+            raise ConfigError('--review-url is supported only for review data operations', code='invalid_arguments')
         if args.command == 'version':
             if (args.project / 'review.config.json').exists():
                 config = load_project_config(args.project)
@@ -66,7 +69,7 @@ def main(argv=None):
                 result.update(ok=value['ready'], projectId=config.project_id, toolVersion=config.tool_version, **value)
                 print(json.dumps(result, ensure_ascii=False), flush=True)
                 return 0 if value['ready'] else 2
-            base_url = 'http://127.0.0.1:' + str(config.server['port']) + config.server['basePath']
+            base_url = args.review_url if args.review_url is not None else 'http://127.0.0.1:' + str(config.server['port']) + config.server['basePath']
             client = ReviewClient(base_url, config.project_id)
             value = {'command': args.command}
             if args.command == 'list':
