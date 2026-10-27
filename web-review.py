@@ -32,6 +32,7 @@ def main(argv=None):
     toggle.add_argument('--no-codex', dest='codex', action='store_false')
     commands.add_parser('serve', help='Serve the configured project')
     commands.add_parser('version', help='Report toolkit version')
+    commands.add_parser('doctor', help='Check environment, protocol and auth without inference')
     commands.add_parser('list', help='List reviews from the configured service')
     show = commands.add_parser('show', help='Read a frozen review snapshot')
     show.add_argument('--id', required=True)
@@ -59,6 +60,12 @@ def main(argv=None):
             if args.command == 'serve':
                 serve_project(config)
                 return 0
+            if args.command == 'doctor':
+                from codex_doctor import doctor
+                value = {'command': 'doctor', **doctor(config)}
+                result.update(ok=value['ready'], projectId=config.project_id, toolVersion=config.tool_version, **value)
+                print(json.dumps(result, ensure_ascii=False), flush=True)
+                return 0 if value['ready'] else 2
             base_url = 'http://127.0.0.1:' + str(config.server['port']) + config.server['basePath']
             client = ReviewClient(base_url, config.project_id)
             value = {'command': args.command}

@@ -467,10 +467,9 @@ def serve_project(config: 'ProjectConfig') -> None:
     options = config.server
     tasks = None
     if config.codex['enabled']:
-        from codex_tasks import CodexTasks
-        # The project-aware prompt/model bridge is owned by the later bridge task.
+        from codex_tasks import CodexTasks, execution_config_for
         tasks = CodexTasks(config.project_root, config.data_dir, config.jobs_dir,
-                           config.codex['executable'])
+                           config.codex['executable'], execution_config=execution_config_for(config))
     url = f"http://127.0.0.1:{options['port']}{options['basePath']}/"
     result = {'ok': True, 'projectId': config.project_id, 'toolVersion': config.tool_version,
               'command': 'serve', 'url': url}

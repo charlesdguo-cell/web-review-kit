@@ -76,6 +76,73 @@ class CodexTaskTests(unittest.TestCase):
     def rpc(self):
         return [json.loads(line) for line in (self.root / 'rpc.jsonl').read_text().splitlines()]
 
+    def test_external_project_execution_context(self):
+        skill = self.root / 'test-skill' / 'SKILL.md'
+        skill.parent.mkdir(); skill.write_text('---\nname: web-review\ndescription: test\n---\nDirect worker only.')
+        execution = {'projectId': 'external-fixture', 'toolVersion': 'test-version',
+                     'guidance': {'requiredFiles': ['README.external.md'], 'sourceRoots': ['src/'],
+                                  'buildCommands': [['python3', 'build.py']], 'checkCommands': [['python3', 'check.py']]},
+                     'codex': {'approvalPolicy': 'never', 'sandbox': 'danger-full-access', 'model': 'fixture-model'},
+                     'skillPath': str(skill)}
+        self.tasks = CodexTasks(self.root, self.data, self.root / 'jobs', str(self.executable), execution_config=execution)
+        job = self.tasks.start([self.comment], self.base)
+        done = self.wait_done(); self.assertEqual(done['status'], 'completed')
+        request = json.loads((self.root / 'jobs' / job['id'] / 'request.json').read_text())
+        self.assertEqual(request['executionConfig'], execution)
+        invocation = json.loads((self.root / 'invocation.json').read_text())
+        self.assertEqual(invocation['cwd'], str(self.root.resolve()))
+        self.assertIn('approval_policy="never"', invocation['args'])
+        self.assertIn('sandbox_mode="danger-full-access"', invocation['args'])
+        calls = self.rpc()
+        options = next(c['params'] for c in calls if c.get('method') == 'thread/start')
+        self.assertEqual(options, {'cwd': str(self.root.resolve()), 'approvalPolicy': 'never',
+                                  'sandbox': 'danger-full-access', 'model': 'fixture-model'})
+        inputs = next(c['params']['input'] for c in calls if c.get('method') == 'turn/start')
+        self.assertIn({'type': 'skill', 'name': 'web-review', 'path': str(skill)}, inputs)
+        prompt = next(item['text'] for item in inputs if item['type'] == 'text')
+        for expected in ('README.external.md', 'src/', 'build.py', 'check.py', self.comment['text']):
+            self.assertIn(expected, prompt)
+        self.assertNotIn('Morsea', prompt); self.assertNotIn('prototype/', prompt)
+        with self.assertRaises(ValueError):
+            make_server(self.pages, self.data, 0, public_origins=['https://review.example'], codex_tasks=self.tasks)
+        # Reconfiguration never changes the existing conversation's frozen execution snapshot.
+        request_bytes = (self.root / 'jobs' / job['id'] / 'request.json').read_bytes()
+        execution['codex']['model'] = 'different-model'
+        self.tasks.execution_config = execution
+        self.tasks.message(job['id'], uuid.uuid4().hex, 'same-thread follow-up')
+        resumed = self.wait_done(); self.assertEqual(resumed['threadId'], done['threadId'])
+        self.assertEqual((self.root / 'jobs' / job['id'] / 'request.json').read_bytes(), request_bytes)
+        resume = next(c['params'] for c in self.rpc() if c.get('method') == 'thread/resume')
+        self.assertEqual(resume['model'], 'fixture-model')
+        turns = [c for c in self.rpc() if c.get('method') == 'turn/start']
+        self.assertEqual(turns[-1]['params']['input'], [{'type': 'text', 'text': 'same-thread follow-up'}])
+
+    def test_unsupported_client_request_is_explicit_failure_preserving_work(self):
+        (self.root / 'behavior').write_text('unsupported')
+        existing_work = self.root / 'already-changed.txt'; existing_work.write_text('preserve completed work')
+        self.post(); job = self.wait_done()
+        self.assertEqual(job['status'], 'failed')
+        self.assertIn('item/tool/call', job['error']); self.assertIn('不支持', job['error'])
+        self.assertEqual(existing_work.read_text(), 'preserve completed work')
+        self.assertEqual(job['completedCount'], 0)
+
+    def test_default_model_is_omitted_and_legacy_request_stays_readable(self):
+        self.post(); first = self.wait_done()
+        path = self.root / 'jobs' / first['id'] / 'request.json'
+        request = json.loads(path.read_text())
+        self.assertNotIn('executionConfig', request)
+        options = next(c['params'] for c in self.rpc() if c.get('method') == 'thread/start')
+        self.assertNotIn('model', options)
+        self.tasks = CodexTasks(self.root, self.data, self.root / 'jobs', str(self.executable),
+                                execution_config={'skillPath': '/new/missing/skill', 'codex': {'model': 'new-model'}})
+        self.assertEqual(self.tasks.current()['result'], first['result'])
+        self.tasks.message(first['id'], uuid.uuid4().hex, 'legacy remains same thread')
+        job = self.wait_done(); self.assertEqual(job['status'], 'completed')
+        self.assertEqual(job['threadId'], first['threadId'])
+        options = next(c['params'] for c in self.rpc() if c.get('method') == 'thread/resume')
+        self.assertNotIn('model', options)
+        self.assertEqual(json.loads(path.read_text()), request)
+
     def test_live_messages_steer_same_turn_and_are_idempotent(self):
         (self.root / 'behavior').write_text('slow')
         self.post()

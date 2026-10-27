@@ -1,4 +1,5 @@
 """Local, single-task Codex launcher; browser requests never supply shell commands."""
+import copy
 import fcntl
 import json
 import os
@@ -55,16 +56,43 @@ def find_codex():
     return None
 
 
+def resolve_executable(executable):
+    """Bare names use PATH; configured filesystem paths never fall back elsewhere."""
+    if not executable:
+        return None
+    value = str(executable)
+    if '/' not in value:
+        found = shutil.which(value)
+        return str(Path(found).resolve()) if found else None
+    path = Path(value).resolve()
+    return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def skill_path():
+    return Path(__file__).resolve().parent.parent / 'skills' / 'web-review' / 'SKILL.md'
+
+
+def execution_config_for(config):
+    # Deliberately whitelist execution fields; configuration must never carry credentials.
+    codex = {'approvalPolicy': 'never', 'sandbox': 'danger-full-access'}
+    if config.codex.get('model'):
+        codex['model'] = config.codex['model']
+    return {'projectId': config.project_id, 'toolVersion': config.tool_version,
+            'guidance': copy.deepcopy(config.guidance), 'codex': codex,
+            'skillPath': str(skill_path())}
+
+
 class TaskConflict(Exception):
     pass
 
 
 class CodexTasks:
-    def __init__(self, project, data, output, executable=None):
+    def __init__(self, project, data, output, executable=None, execution_config=None):
         self.project = Path(project).resolve()
         self.data = Path(data).resolve()
         self.output = Path(output).resolve()
-        self.executable = executable or find_codex()
+        self.executable = resolve_executable(executable) if executable is not None else find_codex()
+        self.execution_config = copy.deepcopy(execution_config)
         self.output.mkdir(parents=True, exist_ok=True)
         self.mutex = threading.Lock()
         self.workers = []
@@ -114,7 +142,7 @@ class CodexTasks:
 
     def status(self):
         return {'available': bool(self.executable and os.access(self.executable, os.X_OK)),
-                'reason': '' if self.executable else '未检测到本机 Codex，请安装或在启动服务时指定 --codex-bin。',
+                'reason': '' if self.executable and os.access(self.executable, os.X_OK) else '未检测到本机 Codex，请安装或在启动服务时指定 --codex-bin。',
                 'job': self.current()}
 
     def _spawn(self, directory, handle):
@@ -139,6 +167,10 @@ class CodexTasks:
             same = previous and batch_key(job_comments(previous)) == batch_key(comments)
             if same and previous['status'] == 'completed' and not retry_job_id:
                 return previous
+            if self.execution_config:
+                path = Path(self.execution_config['skillPath'])
+                if not path.is_absolute() or not path.is_file() or not os.access(path, os.R_OK):
+                    raise ValueError('web-review skill 不可读；请检查固定版本安装。')
             handle = self._lock()
             if not handle:
                 raise TaskConflict('已有 Codex 任务在处理评论，请等待完成或先停止该任务。')
@@ -150,8 +182,11 @@ class CodexTasks:
             directory.mkdir()
             try:
                 write_json(directory / 'status.json', job)
-                write_json(directory / 'request.json', {'project': str(self.project), 'data': str(self.data),
-                           'reviewUrl': review_url, 'executable': self.executable, 'comments': comments})
+                request = {'project': str(self.project), 'data': str(self.data),
+                           'reviewUrl': review_url, 'executable': self.executable, 'comments': comments}
+                if self.execution_config is not None:
+                    request['executionConfig'] = copy.deepcopy(self.execution_config)
+                write_json(directory / 'request.json', request)
                 self._spawn(directory, handle)
                 write_json(self.output / 'current.json', {'id': job['id']})
             except OSError:
@@ -222,7 +257,7 @@ class CodexTasks:
             return job
 
 
-def prompt_for(request):
+def legacy_prompt_for(request):
     return f'''用户从 Morsea 本机评审工具栏点击「交给 Codex」，授权你一次性处理以下批次中的全部待处理评论。
 项目目录：{request['project']}
 评审入口：{request['reviewUrl']}
@@ -237,6 +272,34 @@ def prompt_for(request):
 4. 修改后构建，按改动范围使用隔离浏览器和临时评论数据验证；准确报告通过、失败或未完成事项。逐条汇报正在处理的评论编号。
 5. 每条评论完成并验证后才标记 changed，不能标记 resolved，也不能因为批次结束将未完成的评论一并标记。首次更新前完整备份评论目录；每次更新前重新读取当前记录，核对仍与快照一致，使用最新 updatedAt 作为 expectedUpdate POST 到 /__review/comments，保留原截图、锚点、附图和其他评论，写清 resolution。若该条需要产品决策或没有完成，保持 open，继续其他可独立处理的评论。
 6. 用中文返回批次结果，列明已完成和未完成的评论编号、改了什么、实际验证及如何查看。不要把进程结束或测试通过当作全部评论完成或用户验收。
+'''
+
+
+def prompt_for(request):
+    execution = request.get('executionConfig')
+    if execution is None:
+        return legacy_prompt_for(request)
+    guidance = execution.get('guidance', {})
+    return f'''你是本机网页评审派发的独立 worker，直接处理当前冻结批次，不要递归启动评审任务、其他 Codex 或子代理。
+项目目录：{request['project']}
+项目标识：{execution.get('projectId', '')}
+工具版本：{execution.get('toolVersion', '')}
+评审入口：{request['reviewUrl']}
+评论数据目录：{request['data']}
+项目必读文件：{json.dumps(guidance.get('requiredFiles', []), ensure_ascii=False)}
+允许修改的源码范围：{json.dumps(guidance.get('sourceRoots', []), ensure_ascii=False)}
+构建命令（argv）：{json.dumps(guidance.get('buildCommands', []), ensure_ascii=False)}
+检查命令（argv）：{json.dumps(guidance.get('checkCommands', []), ensure_ascii=False)}
+本次评论快照（共 {len(request['comments'])} 条，按编号从旧到新）：
+{json.dumps(request['comments'], ensure_ascii=False, indent=2)}
+
+执行要求：
+1. 先读取项目 AGENTS.md（如有）、上述必读文件及 web-review skill，检查本批次原截图、锚点和全部附图；不要套用其他项目规范。源码范围和命令由项目配置定义；缺失或冲突时保留相关评论 open 并说明，不臆造构建成功。
+2. 按编号及依赖处理冻结批次，不加入运行期间新增评论。每条开始前 GET 评审入口的 __review/comments 核对原记录；状态不再 open 或正文、附图、updatedAt 与快照不一致时跳过该条并说明，继续其他独立评论。
+3. 直接完成范围内的可逆修改，保留已有未提交修改；不提交、推送、部署或调用任务启动接口。首次更新前完整备份评论目录至项目外部，保留全部原证据及时间戳。
+4. 构建并按修改范围使用隔离浏览器和临时数据检查，准确报告实际通过、失败和未执行的检查。逐条汇报评论编号。
+5. 仅完成且验证后标记 changed，不能标记 resolved。更新前重新读取记录且核对冻结快照，以最新 updatedAt 为 expectedUpdate POST 到 __review/comments，带本机评审 Origin，保留原截图、锚点、附件及其他字段，写清 resolution 并回读。不覆盖冲突、不重复处理已变更的评论；未完成保持 open。
+6. 中文返回每条已完成、跳过或未完成的结果、验证和查看方式。进程结束不等于评论完成或用户验收。
 '''
 
 

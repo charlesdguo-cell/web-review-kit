@@ -8,6 +8,10 @@ import threading
 import time
 import uuid
 
+if '--version' in sys.argv:
+    print('codex-cli 0.162.1-fixture')
+    raise SystemExit(0)
+
 root = pathlib.Path.cwd()
 incoming = queue.Queue()
 active = None
@@ -71,7 +75,14 @@ while True:
         continue
     result = {}
     if method == 'initialize':
+        if (root / 'doctor-behavior').exists() and (root / 'doctor-behavior').read_text() == 'handshake-fail':
+            emit({'id': request['id'], 'error': {'code': -32600, 'message': 'SENSITIVE handshake failure'}})
+            continue
         result = {'userAgent': 'fixture'}
+    elif method == 'account/read':
+        behavior = (root / 'doctor-behavior').read_text() if (root / 'doctor-behavior').exists() else ''
+        result = {'account': None if behavior in ('unauthenticated', 'api-provider') else {'type': 'chatgpt', 'email': 'SENSITIVE@example.test'},
+                  'requiresOpenaiAuth': behavior != 'api-provider'}
     elif method in ('thread/start', 'thread/resume'):
         result = {'thread': {'id': 'fixture-thread'}}
     elif method == 'turn/start':
@@ -91,6 +102,8 @@ while True:
         result = {'turnId': active}
     emit({'id': request['id'], 'result': result})
     if method == 'turn/start':
+        if mode == 'unsupported':
+            emit({'id': 'fixture-client-request', 'method': 'item/tool/call', 'params': {'tool': 'unavailable'}})
         event('turn/started', turn={'id': active, 'status': 'inProgress'})
         reply('正在检查指定评论' if '本次评论快照' in prompt else '同一会话继续：' + prompt)
         deadline = None if mode == 'slow' else time.monotonic() + .25

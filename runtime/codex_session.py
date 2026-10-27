@@ -15,14 +15,18 @@ class RpcError(Exception):
     pass
 
 
+class UnsupportedClientRequest(RpcError):
+    pass
+
+
 class AppServer:
-    def __init__(self, request, directory, notify):
+    def __init__(self, request, directory, notify, log_events=True):
         self.notify = notify
         self.serial = 0
         self.incoming = queue.Queue()
         self.responses = {}
-        self.errors = (directory / 'stderr.log').open('a')
-        self.events = (directory / 'events.jsonl').open('a')
+        self.errors = (directory / 'stderr.log').open('a') if log_events else open(os.devnull, 'a')
+        self.events = (directory / 'events.jsonl').open('a') if log_events else open(os.devnull, 'a')
         environment = dict(os.environ)
         environment.pop('CODEX_THREAD_ID', None)
         self.process = subprocess.Popen(
@@ -59,6 +63,7 @@ class AppServer:
             if 'id' in message:
                 # This client does not grant new permissions or execute arbitrary client tools.
                 self.send({'id': message['id'], 'error': {'code': -32601, 'message': 'Unsupported client request'}})
+                raise UnsupportedClientRequest('Unsupported Codex client request: ' + message['method'])
             else:
                 self.notify(message['method'], message.get('params', {}))
         elif 'id' in message:
@@ -152,10 +157,13 @@ def run_session(directory, lock_fd, prompt_for):
                 elif item.get('type') == 'fileChange':
                     job['progress'] = '正在修改项目文件'
 
-    def begin(text):
+    def begin(text, first=False):
         nonlocal active
         job.update(status='running', error='', progress='正在处理你的消息')
-        result = client.call('turn/start', {'threadId': job['threadId'], 'input': [{'type': 'text', 'text': text}]})
+        inputs = [{'type': 'text', 'text': text}]
+        if first and request.get('executionConfig'):
+            inputs.append({'type': 'skill', 'name': 'web-review', 'path': request['executionConfig']['skillPath']})
+        result = client.call('turn/start', {'threadId': job['threadId'], 'input': inputs})
         turn = result['turn']
         active = None if turn['id'] in finished else turn['id']
         job['turnId'] = active
@@ -167,6 +175,8 @@ def run_session(directory, lock_fd, prompt_for):
                 try:
                     client.call('turn/steer', {'threadId': job['threadId'], 'expectedTurnId': active,
                                               'input': [{'type': 'text', 'text': message['text']}]})
+                except UnsupportedClientRequest:
+                    raise
                 except RpcError:
                     # A turn can finish while the message is in flight. Continue on the same thread.
                     if active is not None:
@@ -175,6 +185,8 @@ def run_session(directory, lock_fd, prompt_for):
             else:
                 begin(message['text'])
             message.update(status='sent', deliveredAt=time.time())
+        except UnsupportedClientRequest:
+            raise
         except RpcError as error:
             message.update(status='failed', error='消息未确认送达，请查看任务状态后重新发送。')
             print('message: ' + str(error), file=sys.stderr)
@@ -182,9 +194,13 @@ def run_session(directory, lock_fd, prompt_for):
 
     try:
         client = AppServer(request, directory, notify)
-        client.call('initialize', {'clientInfo': {'name': 'morsea_review', 'title': 'Morsea Review', 'version': '1.0'}})
+        client.call('initialize', {'clientInfo': {'name': 'web_review_kit', 'title': 'Web Review Kit', 'version': '1.0'}})
         client.send({'method': 'initialized'})
         options = {'cwd': request['project'], 'approvalPolicy': 'never', 'sandbox': 'danger-full-access'}
+        execution = request.get('executionConfig') or {}
+        model = execution.get('codex', {}).get('model')
+        if model:
+            options['model'] = model
         resuming = bool(job.get('threadId'))
         if resuming:
             options['threadId'] = job['threadId']
@@ -192,7 +208,7 @@ def run_session(directory, lock_fd, prompt_for):
         job.update(threadId=result['thread']['id'], status='running', transport='app-server')
         save()
         if not resuming and not (directory / 'cancel').exists():
-            begin(prompt_for(request))
+            begin(prompt_for(request), first=True)
         while True:
             if (directory / 'cancel').exists() and not stopping:
                 stopping = True; stop_at = time.monotonic()
@@ -229,7 +245,8 @@ def run_session(directory, lock_fd, prompt_for):
                 save()
     except Exception as error:
         print(type(error).__name__ + ': ' + str(error), file=sys.stderr)
-        job.update(status='failed', error='Codex 执行未完成，请检查本机登录、网络或任务日志后重试。')
+        job.update(status='failed', error=('客户端不支持 Codex 请求：' + str(error) + '；已完成的修改仍保留。')
+                   if isinstance(error, UnsupportedClientRequest) else 'Codex 执行未完成，请检查本机登录、网络或任务日志后重试。')
     finally:
         if client:
             client.close()
