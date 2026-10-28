@@ -2,11 +2,11 @@
 
 Private team toolkit for static HTML and build output: element, region and text comments, original screenshots, attachments, optimistic updates, offline export and shared HTTP review. The current checkout version is in [VERSION](VERSION). Runtime source lives only in `runtime/`; consumer copies are installed artifacts.
 
-The first-release goal is parity with the original comment/selection/location, screenshot/attachment, offline export and shared review behavior, plus the existing Codex frozen-batch processing, progress, supplemental instructions, stop/retry and same-thread follow-up. Project configuration, the [web-review Skill](skills/web-review/SKILL.md) and a verified fixed-version install support reuse. Core usability must be validated in Morsea and one independent static project while preserving original data and task history.
+The first-release goal is parity with the original comment/selection/location, screenshot/attachment, offline export and shared review behavior, plus the existing Codex frozen-batch processing, progress, supplemental instructions, stop/retry and same-thread follow-up. Project configuration, the [web-review Skill](skills/web-review/SKILL.md) and a verified global installation with optional project pins support reuse. Core usability must be validated in Morsea and one independent static project while preserving original data and task history.
 
-Use the installation root `~/.local/share/web-review-kit` and the explicit candidate in [VERSION](VERSION), following the [installation guide](docs/releases.md). Installation does not implicitly change project pins, data or global agent configuration. Advanced update/rollback, cross-root relocation, old-candidate compatibility and multi-platform support are experimental or deferred; they are not first-release acceptance gates. Real Codex and user acceptance still require their own evidence; local protocol tests do not establish them.
+Use the installation root `~/.local/share/web-review-kit` and the explicit candidate in [VERSION](VERSION), following the [installation guide](docs/releases.md). Installation activates the verified release as the global default through the stable `current` link. Use `--no-activate-global` to install files without changing that default; `--activate-global` remains accepted explicitly. Project pins, data and global agent configuration are preserved. Advanced per-project update/rollback, cross-root relocation and multi-platform support remain experimental or deferred; they are not first-release acceptance gates. Real Codex and user acceptance still require their own evidence; local protocol tests do not establish them.
 
-Install the [web-review Skill](skills/web-review/SKILL.md) globally using the [standard release guide](docs/releases.md#global-skill). Its description and workflow include HTML reports, static webpages, prototypes and demos: deliver a verified comment URL while preserving offline reading, unless the user opts out. Everyone receives this same packaged Skill; no personal AGENTS.md rule or source-checkout wrapper is needed. Existing projects continue to use their own pinned release.
+Install the [web-review Skill](skills/web-review/SKILL.md) globally using the [standard release guide](docs/releases.md#global-skill). Its description and workflow include HTML reports, static webpages, prototypes and demos: deliver a verified comment URL while preserving offline reading, unless the user opts out. Everyone receives this same packaged Skill; no personal AGENTS.md rule or source-checkout wrapper is needed. Projects using `toolVersion: global` follow the explicitly selected global default on their next invocation or service restart; explicit pins remain unchanged. The global Skill and runtime are maintained once, while each project retains its configuration and review data.
 
 ## Configure and serve
 
@@ -29,7 +29,7 @@ python3 /absolute/web-review-kit/web-review.py --project /absolute/consumer doct
 
 ## Process comments
 
-For a configured installed project, use the [Skill helper](skills/web-review/scripts/review.py), which resolves `review.config.json.toolVersion` through `release_manager.resolve_project_release` and invokes only that version's CLI and workflow references:
+For a configured installed project, use the [Skill helper](skills/web-review/scripts/review.py), which resolves `review.config.json.toolVersion` (`global` or an explicit pin) through `release_manager.resolve_project_release` and invokes the verified concrete release's CLI and workflow references:
 
 ```sh
 python3 /absolute/skill/scripts/review.py --project /absolute/consumer --install-root /absolute/installation locate

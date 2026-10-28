@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 
 from annotation_tasks import public_conversation, publish_conversation, read_conversation, save_annotation_message
 from codex_tasks import CodexTasks, TaskConflict, annotation_prompt_for, prompt_for, write_json
@@ -84,6 +85,29 @@ class AnnotationTaskTests(unittest.TestCase):
 
     def enqueue(self, record=None, token=None):
         return self.tasks.enqueue_annotation(record or self.a, self.base, token or uuid.uuid4().hex)
+
+    def test_runtime_validation_failure_clears_pending_queue_and_lock(self):
+        from release_manager import ReleaseError
+        handle = self.tasks._lock()
+        try:
+            self.assertEqual(self.enqueue()['status'], 'queued')
+            directory, _ = self.job(self.a['id'])
+            inbox = directory / 'inbox'
+            inbox.mkdir()
+            write_json(inbox / ('c' * 32 + '.json'), {'id': 'c' * 32, 'role': 'user', 'text': 'followup',
+                       'status': 'queued', 'createdAt': time.time()})
+        finally:
+            handle.close()
+        original = (self.data / 'annotations.json').read_bytes()
+        with patch.object(self.tasks, '_worker_path', side_effect=ReleaseError('policy changed', 'request_conflict')):
+            self.tasks.tick_annotations()
+        self.assertEqual(self.job(self.a['id'])[1]['status'], 'failed')
+        self.assertEqual(json.loads((inbox / ('c' * 32 + '.json')).read_text())['status'], 'failed')
+        self.assertEqual((self.data / 'annotations.json').read_bytes(), original)
+        self.assertFalse(self.tasks.workers)
+        handle = self.tasks._lock()
+        self.assertIsNotNone(handle)
+        handle.close()
 
     def test_serial_queue_distinct_snapshots_and_no_legacy_pointer(self):
         (self.root / 'behavior').write_text('slow')

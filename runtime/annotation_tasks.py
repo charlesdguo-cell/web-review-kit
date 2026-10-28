@@ -235,9 +235,16 @@ class AnnotationTasksMixin:
                     write_json(directory / 'status.json', job)
                     self._annotation_publish(directory, job)
                     self._spawn(directory, handle)
-                except (OSError, ValueError):
-                    job.update(status='failed', error='无法启动本机 Codex，请检查安装与目录权限；已保存的批注和修改仍保留。', finishedAt=time.time())
+                except (OSError, ValueError) as error:
+                    detail = ('任务冻结版本或项目配置不匹配：' + str(error) if getattr(error, 'code', None)
+                              else '无法启动本机 Codex，请检查安装与目录权限；已保存的批注和修改仍保留。')
+                    job.update(status='failed', error=detail, finishedAt=time.time())
                     write_json(directory / 'status.json', job)
+                    from codex_tasks import inbox_messages
+                    for message in inbox_messages(directory):
+                        if message['status'] == 'queued':
+                            message.update(status='failed', error=detail)
+                            write_json(directory / 'inbox' / (message['id'] + '.json'), message)
                     self._annotation_publish(directory, job)
         finally:
             if handle:
@@ -334,6 +341,8 @@ class AnnotationTasksMixin:
             if retry and job['status'] in ACTIVE | {'queued'}:
                 raise TaskConflict('任务仍在处理，请等待完成。')
             self._annotation_available()
+            if job['status'] not in ACTIVE | {'queued'}:
+                self._worker_path(directory)
             request = json.loads((directory / 'request.json').read_text())
             context = {**request, 'annotation': copy.deepcopy(record), 'reviewUrl': review_url,
                        'userMessage': text, 'retry': retry,

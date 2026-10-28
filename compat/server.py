@@ -31,11 +31,13 @@ def main(argv=None):
     project = (args.project or Path(__file__).absolute().parents[2]).resolve()
     try:
         install = installed_root(RELEASE)
+        config = load_project_config(project)
         target = resolve_project_release(project, install)
         if target != RELEASE:
+            if config.version_policy == 'global':
+                raise ReleaseError('Global current changed after launcher resolution; retry startup', 'version_conflict')
             import subprocess
             return subprocess.run([sys.executable, str(target / 'compat/server.py'), '--project', str(project)] + list(argv if argv is not None else sys.argv[1:])).returncode
-        config = load_project_config(project)
         options = dict(config.server)
         for flag, key in [('port', 'port'), ('base_path', 'basePath'), ('public_origin', 'publicOrigins'), ('bind_host', 'host')]:
             if getattr(args, flag) is not None:

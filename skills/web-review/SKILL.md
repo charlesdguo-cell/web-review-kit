@@ -5,7 +5,7 @@ description: Use when creating or delivering an HTML report, static webpage, int
 
 # Web Review
 
-Use the consumer project's pinned tool and accompanying workflow. Preserve original review evidence; technical completion is `changed`, while `resolved` requires user acceptance.
+Use the consumer project's resolved tool and accompanying workflow. `toolVersion: global` follows the verified global default; an explicit version remains pinned. A service or worker keeps its concrete startup version. Preserve original review evidence; technical completion is `changed`, while `resolved` requires user acceptance.
 
 For HTML reports, static webpages, interactive prototypes and demos delivered for the user to inspect, provide a working comment entry by default and keep the original artifact readable offline. Respect explicit requests to skip comments and project-specific delivery constraints. Code snippets and non-HTML documents do not require review setup. This default belongs to the distributed Skill; no personal AGENTS.md rule or source-checkout wrapper is required.
 
@@ -15,16 +15,16 @@ Describe progress through the comment being handled, the problem found and the a
 
 Run automated browser checks headlessly, using isolated profiles and temporary review data. Prefer the project's existing headless check entrypoints; verify effective headless mode when choosing another tool. Visible browsers are for explicit user viewing requests or user-assisted steps such as login. Save evidence, then close only the browser sessions and temporary test servers created for the check; retain the user's review service and existing windows.
 
-An already dispatched worker follows only its frozen batch and executionConfig; HTML delivery defaults do not expand that task.
+An already dispatched worker follows only its frozen batch and executionConfig; HTML delivery defaults do not expand that task. Keep the supplied `WEB_REVIEW_HELPER` and `WEB_REVIEW_REQUEST_PATH` environment for real project builds so they use the frozen runtime. Isolated fixtures for other projects must clear inherited request context.
 
 | Entry | Observable input | Read next |
 | --- | --- | --- |
-| Deliver HTML | HTML report, static webpage, prototype or demo for user inspection | Follow project setup using the existing pin, or this installed bundle for an unconfigured project |
+| Deliver HTML | HTML report, static webpage, prototype or demo for user inspection | Follow project setup using the existing version policy, or the verified global default for an unconfigured project |
 | Connect a project | User requests review setup, no frozen worker request | [project-setup](references/project-setup.md) |
-| Current conversation | User names comments to handle here | Locate the pinned release, then read its `commentWorkflow` |
+| Current conversation | User names comments to handle here | Locate the selected release, then read its `commentWorkflow` |
 | Existing worker | Already dispatched with frozen comments/request.json | Locate with `--request`, then read its `commentWorkflow`; consume this batch directly |
 
-Installation/bootstrap and global or project-local discovery commands are in the same release's [release guide](../../docs/releases.md). Prefer the global discovery link for use across projects. Install returns the verified absolute `installRoot`; keep it with the installation instructions. A discovered symlink remains attached to its complete `INSTALL/releases/VERSION` bundle, allowing the helper to derive that exact root with receipt verification. It never searches for a newest version. A configured packaged worker also receives `executionConfig.installRoot`, `skillPath` and the absolute frozen request path in its prompt.
+Installation/bootstrap and global or project-local discovery commands are in the same release's [release guide](../../docs/releases.md). Prefer the global discovery link for use across projects. The installer activates the installed bundle globally by default; use `--no-activate-global` only when installation without selection is requested. Supply `--skill-link` for the discovery entry. Install returns the verified absolute `installRoot`; keep it with the installation instructions. Global discovery points through `INSTALL/current/skills/web-review`; `current` selects one complete verified `INSTALL/releases/VERSION` bundle. The helper derives the installation root with receipt verification, then follows the project policy. Project-local Skill copies and fixed release links are unnecessary. It never searches for a newest version. A configured packaged worker also receives `executionConfig.installRoot`, `skillPath` and the absolute frozen request path in its prompt.
 
 For a configured project, run the bundled helper through Python (omit `--install-root` only when using the verified layout above):
 
@@ -32,9 +32,9 @@ For a configured project, run the bundled helper through Python (omit `--install
 python3 /absolute/path/to/skills/web-review/scripts/review.py --project /absolute/consumer --install-root /absolute/installation locate
 ```
 
-Use the returned absolute `setupWorkflow` or `commentWorkflow` path from that release, rather than the host's newer references. Subsequent explicit CLI operations use this same helper and project/install root. For an existing worker, add `--request /absolute/job/request.json` before `locate` and every data command. It checks the frozen identity/version/skill path, retains request guidance and targets request.reviewUrl. If the worker prompt contains the request inline only, preserve it verbatim in a temporary file before using the helper.
+Use the returned absolute `setupWorkflow` or `commentWorkflow` path from that release, rather than the host's newer references. Subsequent explicit CLI operations use this same helper and project/install root. For an existing worker, add `--request /absolute/job/request.json` before `locate` and every data command. It resolves the frozen concrete version independently of later global-default changes, checks identity/policy/Skill/receipt, retains request guidance and targets request.reviewUrl. If the worker prompt contains the request inline only, preserve it verbatim in a temporary file before using the helper.
 
-Missing resolver, missing pinned release or incompatible `workflowVersion` is a stopping condition: report the missing capability. Do not fall back to host/latest, download, update the pin, or dispatch a job to solve it. Only first setup without a configuration may use the explicitly selected host bundle.
+Missing resolver, missing global default or selected release, or incompatible `workflowVersion` is a stopping condition: report the missing capability. Do not fall back to host/latest, download, activate a different global default, update the project policy, or dispatch a job to solve it. Only first setup without a configuration may use the explicitly selected host bundle.
 
 An existing worker must not start another Codex, subagent or review task. Both processing modes limit work to authorized incremental fixes and the consumer's source/build/check guidance. The toolkit itself and global agent configuration are outside a consumer review fix.
 

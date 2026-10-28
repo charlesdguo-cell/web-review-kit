@@ -32,6 +32,12 @@ class ProjectConfig:
     browser_storage: dict
     guidance: dict
     codex: dict
+    # Keep the requested policy separate from the immutable loaded runtime version.
+    tool_version_policy: str = None
+
+    @property
+    def version_policy(self):
+        return self.tool_version_policy or self.tool_version
 
 
 def _text(value, name):
@@ -65,7 +71,8 @@ def _validated(root, raw):
     identity = _text(raw.get('projectId'), 'projectId')
     if not re.fullmatch(r'[a-zA-Z0-9_.-]+', identity):
         raise ConfigError('Invalid projectId')
-    version = _text(raw.get('toolVersion'), 'toolVersion')
+    policy = _text(raw.get('toolVersion'), 'toolVersion')
+    version = TOOL_VERSION if policy == 'global' else policy
     web = _path(root, raw.get('webRoot'), 'webRoot')
     data = _path(root, raw.get('dataDir'), 'dataDir')
     jobs = _path(root, raw.get('jobsDir'), 'jobsDir')
@@ -122,7 +129,7 @@ def _validated(root, raw):
             _strings(argv, 'guidance.' + name)
     return ProjectConfig(identity, version, root, web, data, jobs, server,
                          _object(raw.get('pageIdentity'), 'pageIdentity'),
-                         _object(raw.get('browserStorage'), 'browserStorage'), guidance, codex)
+                         _object(raw.get('browserStorage'), 'browserStorage'), guidance, codex, policy)
 
 
 def load_project_config(project_root: Path) -> ProjectConfig:
@@ -144,8 +151,18 @@ def setup_project(project_root: Path, options: dict):
     if existing:
         raw = json.loads(path.read_text(encoding='utf-8'))
     else:
+        default_version = TOOL_VERSION
+        release = Path(__file__).resolve().parent.parent
+        if (release / 'release-manifest.json').exists():
+            from release_manager import installed_root, resolve_global_release, ReleaseError
+            install = installed_root(release)
+            current = install / 'current'
+            if current.exists() or current.is_symlink():
+                if resolve_global_release(install) != release:
+                    raise ReleaseError('Setup runtime differs from global current; invoke the global Skill again', 'version_conflict')
+                default_version = 'global'
         raw = {
-            'configVersion': CONFIG_VERSION, 'projectId': str(uuid.uuid4()), 'toolVersion': TOOL_VERSION,
+            'configVersion': CONFIG_VERSION, 'projectId': str(uuid.uuid4()), 'toolVersion': default_version,
             'webRoot': '.', 'dataDir': 'review-data', 'jobsDir': '.review/jobs',
             'server': {'host': '127.0.0.1', 'port': 8799, 'basePath': '', 'publicOrigins': []},
             'pageIdentity': {}, 'browserStorage': {},

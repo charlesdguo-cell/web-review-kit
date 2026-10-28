@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install an explicit local bundle or an exact authorized private GitHub release."""
+"""Install a verified release and select it as the global default unless opted out."""
 import argparse
 import hashlib
 import json
@@ -9,7 +9,7 @@ import sys
 import tempfile
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'runtime'))
-from release_manager import install_release, installed_root, verify_release, ReleaseError, _version
+from release_manager import install_release, installed_root, verify_release, activate_global_release, ReleaseError, _version
 
 
 def main():
@@ -19,6 +19,12 @@ def main():
     source.add_argument('--archive', type=Path)
     source.add_argument('--github-version', help='Exact version in charlesdguo-cell/web-review-kit; uses existing gh login')
     parser.add_argument('--skill-link', type=Path, help='Explicit discovery symlink destination; never writes global config by default')
+    activation = parser.add_mutually_exclusive_group()
+    activation.add_argument('--activate-global', dest='activate_global', action='store_true',
+                            help='Atomically select this verified release as INSTALL/current (default)')
+    activation.add_argument('--no-activate-global', dest='activate_global', action='store_false',
+                            help='Install without changing INSTALL/current; an explicit Skill link stays version-pinned')
+    parser.set_defaults(activate_global=True)
     args = parser.parse_args()
     try:
         with tempfile.TemporaryDirectory(prefix='web-review-download-') as temporary:
@@ -36,7 +42,10 @@ def main():
                 if checksum != [hashlib.sha256(archive.read_bytes()).hexdigest(), name]:
                     raise ReleaseError('Downloaded archive checksum mismatch')
             release = install_release(archive, args.install_root)
-        if args.skill_link:
+        activation = {}
+        if args.activate_global:
+            activation = activate_global_release(release, args.install_root, skill_link=args.skill_link)
+        elif args.skill_link:
             link = args.skill_link.expanduser().absolute()
             target = release / 'skills/web-review'
             if link.exists() or link.is_symlink():
@@ -47,7 +56,7 @@ def main():
                 link.symlink_to(target, target_is_directory=True)
         print(json.dumps({'ok': True, 'toolVersion': verify_release(release)['version'],
                           'installRoot': str(installed_root(release)), 'releaseRoot': str(release),
-                          'skill': str(release / 'skills/web-review/SKILL.md'), 'serviceStarted': False}))
+                          'skill': str(release / 'skills/web-review/SKILL.md'), 'serviceStarted': False, **activation}))
         return 0
     except (OSError, ValueError) as error:
         print(json.dumps({'ok': False, 'error': getattr(error, 'code', 'installation_unavailable'), 'message': str(error)}))

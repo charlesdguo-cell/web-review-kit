@@ -2,6 +2,7 @@ import dataclasses
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import io
@@ -23,6 +24,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ('WEB_REVIEW_REQUEST_PATH', 'WEB_REVIEW_HELPER'):
+            os.environ.pop(name, None)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.source = self.root / 'source'

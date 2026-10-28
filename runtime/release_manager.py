@@ -1,4 +1,4 @@
-"""Deterministic private bundles and explicit, stopped-project pin activation (Python 3.9)."""
+"""Verified private bundles, explicit global selection and stopped-project pins."""
 from contextlib import contextmanager, ExitStack
 import fcntl
 import gzip
@@ -85,6 +85,7 @@ def package_release(source_root: Path, destination: Path) -> Path:
     manifest = {'manifestVersion': 1, 'package': 'web-review-kit', 'version': version,
                 'files': hashes, 'source': {'treeSha256': _hash(_encode(hashes))},
                 'storageSchemas': {'read': [1], 'write': [1]}, 'exportFormats': [2],
+                'runtimeSelection': {'global': 1},
                 'workflowVersion': 1, 'python': '>=3.9',
                 'dependencies': [{'name': 'html2canvas-pro', 'version': '2.4.2',
                                   'sha256': DEPENDENCY_SHA256, 'license': 'MIT',
@@ -150,6 +151,8 @@ def verify_release(path: Path) -> dict:
     if (manifest.get('storageSchemas') != {'read': [1], 'write': [1]} or
             manifest.get('exportFormats') != ([1] if legacy_export_metadata else [2]) or manifest.get('workflowVersion') != 1):
         raise ReleaseError('Unsupported storage/export/workflow contract')
+    if 'runtimeSelection' in manifest and manifest['runtimeSelection'] != {'global': 1}:
+        raise ReleaseError('Unsupported runtime selection contract')
     _workflow(root)
     if manifest['files']['runtime/html2canvas.min.js'] != DEPENDENCY_SHA256:
         raise ReleaseError('Unrecognized vendored dependency')
@@ -186,6 +189,8 @@ def _extract(archive, target):
 
 def _receipt(root, release):
     path = root / 'receipts' / (release.name + '.json')
+    if path.is_symlink():
+        raise ReleaseError('Installation receipt cannot be a symlink')
     expected = {'version': release.name, 'manifestSha256': _hash((release / 'release-manifest.json').read_bytes())}
     if _json(path) != expected:
         raise ReleaseError('Installed release receipt differs from manifest; local modification detected')
@@ -198,6 +203,8 @@ def installed_root(release: Path) -> Path:
     if path.parent.name != 'releases' or path.name != manifest['version']:
         raise ReleaseError('Release is not in an explicit installation releases/VERSION directory')
     root = path.parent.parent
+    if any((root / name).is_symlink() for name in ('releases', 'receipts')):
+        raise ReleaseError('Installation directories cannot be symlinks')
     _receipt(root, path)
     return root
 
@@ -242,15 +249,145 @@ def install_release(archive: Path, install_root: Path) -> Path:
             return target
 
 
-def resolve_project_release(project_root, install_root) -> Path:
-    config = load_project_config(Path(project_root))
+def resolve_installed_version(version, install_root) -> Path:
+    """Resolve one exact release, retaining the closed manifest and receipt checks."""
     root = Path(install_root).expanduser().resolve()
-    release = root / 'releases' / _version(config.tool_version)
+    if any((root / name).is_symlink() for name in ('releases', 'receipts')):
+        raise ReleaseError('Installation directories cannot be symlinks')
+    release = root / 'releases' / _version(version)
     if release.is_symlink() or not release.is_dir():
-        raise ReleaseError('Pinned release is not installed: ' + config.tool_version, 'release_unavailable', 2)
+        raise ReleaseError('Pinned release is not installed: ' + version, 'release_unavailable', 2)
     if installed_root(release) != root:
         raise ReleaseError('Release belongs to a different installation')
     return release
+
+
+def resolve_global_release(install_root) -> Path:
+    root = Path(install_root).expanduser().resolve()
+    current = root / 'current'
+    if not current.is_symlink():
+        raise ReleaseError('Global current must be an explicit installed-release symlink', 'global_release_unavailable', 2)
+    try:
+        target = current.resolve()
+    except (OSError, RuntimeError) as error:
+        raise ReleaseError('Global current cannot be resolved', 'global_release_unavailable', 2) from error
+    if target.parent != root / 'releases':
+        raise ReleaseError('Global current points outside this installation', 'installation_root_conflict')
+    release = resolve_installed_version(target.name, root)
+    if _json(release / 'release-manifest.json').get('runtimeSelection') != {'global': 1}:
+        raise ReleaseError('Selected release does not support global runtime selection; keep it pinned', 'global_runtime_unsupported', 2)
+    if current.resolve() != release:
+        raise ReleaseError('Global current changed during resolution; retry', 'version_conflict')
+    return release
+
+
+def resolve_project_release(project_root, install_root) -> Path:
+    config = load_project_config(Path(project_root))
+    if config.version_policy == 'global':
+        return resolve_global_release(install_root)
+    return resolve_installed_version(config.version_policy, install_root)
+
+
+def resolve_frozen_release(project_root, install_root, execution, request_project) -> Path:
+    """A request binds its policy and identity, but never follows a changed current."""
+    project = Path(project_root).resolve()
+    config = load_project_config(project)
+    root = Path(install_root).expanduser().resolve()
+    if (not isinstance(execution, dict) or not isinstance(request_project, str) or
+            not Path(request_project).is_absolute() or Path(request_project).resolve() != project or
+            execution.get('projectId') != config.project_id or
+            execution.get('toolVersionPolicy', execution.get('toolVersion')) != config.version_policy or
+            execution.get('installRoot', str(root)) != str(root)):
+        raise ReleaseError('Frozen request project, policy or installation differs', 'request_conflict')
+    if config.version_policy != 'global' and execution.get('toolVersion') != config.version_policy:
+        raise ReleaseError('Frozen concrete release differs from the explicit project pin', 'request_conflict')
+    release = resolve_installed_version(execution.get('toolVersion'), root)
+    if config.version_policy == 'global' and _json(release / 'release-manifest.json').get('runtimeSelection') != {'global': 1}:
+        raise ReleaseError('Frozen release does not support global runtime selection', 'global_runtime_unsupported', 2)
+    skill = execution.get('skillPath')
+    if (not isinstance(skill, str) or not Path(skill).is_absolute() or
+            Path(skill).resolve() != release / 'skills/web-review/SKILL.md'):
+        raise ReleaseError('Frozen request Skill differs from the verified release', 'request_conflict')
+    return release
+
+
+def validate_runtime(config, *, release=None, follow_current=True):
+    """Check startup routing, or only the concrete binding for an existing worker."""
+    host = Path(release).resolve() if release is not None else Path(__file__).resolve().parent.parent
+    actual = (host / 'VERSION').read_text().strip()
+    if config.tool_version != actual:
+        raise ReleaseError('Actual runtime differs from loaded project version', 'version_conflict')
+    if (host / 'release-manifest.json').exists():
+        root = installed_root(host)
+        if follow_current and resolve_project_release(config.project_root, root) != host:
+            raise ReleaseError('Runtime differs from selected project release; retry through the Skill', 'version_conflict')
+        return root
+    if config.version_policy == 'global':
+        raise ReleaseError('Global policy requires a verified installation; source checkouts remain pinned', 'installation_context_required', 2)
+    return None
+
+
+def activate_global_release(target, install_root, *, skill_link=None):
+    """Explicit atomic default switch; never mutate projects or running work."""
+    root = Path(install_root).expanduser().resolve()
+    target = Path(target).resolve()
+    with _lock(root / '.install.lock'):
+        release = resolve_installed_version(target.name, root)
+        if release != target:
+            raise ReleaseError('Global target belongs to another installation', 'installation_root_conflict')
+        if _json(release / 'release-manifest.json').get('runtimeSelection') != {'global': 1}:
+            raise ReleaseError('Target release does not support global runtime selection; keep it pinned', 'global_runtime_unsupported', 2)
+        current = root / 'current'
+        previous = resolve_global_release(root) if current.exists() or current.is_symlink() else None
+        link = Path(skill_link).expanduser().absolute() if skill_link is not None else None
+        discovery_target = current / 'skills/web-review'
+        replace_link = False
+        original_skill = None
+        # Preflight discovery before publishing current; unmanaged conflicts preserve both.
+        if link is not None and (link.exists() or link.is_symlink()):
+            if not link.is_symlink():
+                raise ReleaseError('Discovery destination already exists; preserved: ' + str(link))
+            original_skill = os.readlink(link)
+            lexical = Path(os.path.abspath(link.parent / os.readlink(link)))
+            if lexical != discovery_target:
+                existing = link.resolve()
+                old_release = existing.parent.parent
+                if (existing != old_release / 'skills/web-review' or
+                        resolve_installed_version(old_release.name, root) != old_release):
+                    raise ReleaseError('Discovery destination is unmanaged; preserved: ' + str(link))
+                replace_link = True
+        elif link is not None:
+            replace_link = True
+        # Create temporary symlinks before publication, so destination errors cannot
+        # leave a changed default. os.replace keeps readers on a complete old/new target.
+        with ExitStack() as stack:
+            def staged_link(destination, value):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                handle, name = tempfile.mkstemp(prefix='.web-review-link-', dir=destination.parent)
+                os.close(handle)
+                temporary = Path(name)
+                temporary.unlink()
+                temporary.symlink_to(value, target_is_directory=True)
+                stack.callback(lambda: temporary.unlink(missing_ok=True))
+                return temporary
+            next_current = staged_link(current, Path('releases') / release.name) if previous != release else None
+            next_skill = staged_link(link, discovery_target) if replace_link else None
+            restore_skill = staged_link(link, original_skill) if replace_link and original_skill is not None else None
+            if next_skill is not None:
+                os.replace(next_skill, link)
+            try:
+                if next_current is not None:
+                    os.replace(next_current, current)
+            except BaseException:
+                if next_skill is not None:
+                    if restore_skill is not None:
+                        os.replace(restore_skill, link)
+                    else:
+                        link.unlink()
+                raise
+    return {'globalCurrent': str(current), 'globalActivated': True,
+            'previousToolVersion': previous.name if previous else None,
+            'changed': previous != release, 'skillLink': str(link) if link else None}
 
 
 def activate_release(config, target: Path, *, install_root=None) -> dict:
@@ -289,7 +426,7 @@ def activate_release(config, target: Path, *, install_root=None) -> dict:
         original = config_path.read_bytes()
         raw = json.loads(original)
         raw['toolVersion'] = manifest['version']
-        if config.tool_version != manifest['version']:
+        if config.version_policy != manifest['version']:
             with tempfile.NamedTemporaryFile(dir=config.project_root, prefix='.review-config-', delete=False) as output:
                 temporary = Path(output.name)
                 try:
@@ -303,5 +440,5 @@ def activate_release(config, target: Path, *, install_root=None) -> dict:
                 finally:
                     temporary.unlink(missing_ok=True)
     return {'ok': True, 'projectId': config.project_id, 'toolVersion': manifest['version'],
-            'previousToolVersion': config.tool_version, 'releaseRoot': str(target), 'installRoot': str(root),
-            'changed': config.tool_version != manifest['version'], 'serviceStarted': False, 'migrationRun': False}
+            'previousToolVersion': config.version_policy, 'releaseRoot': str(target), 'installRoot': str(root),
+            'changed': config.version_policy != manifest['version'], 'serviceStarted': False, 'migrationRun': False}

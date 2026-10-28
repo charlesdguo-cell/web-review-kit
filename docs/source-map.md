@@ -1,5 +1,13 @@
 # Extraction source map
 
+## 2026-10-29 default activation and rc.11 release
+
+The user subsequently authorized default global activation on installation and publication of a new version. rc.11 carries the global-runtime implementation below plus the installer's default activation and explicit `--no-activate-global` opt-out. `--activate-global` remains supported, discovery still requires an explicit `--skill-link`, and project configuration/data are preserved. The rc.10 local package remains immutable. See the [release plan](superpowers/plans/2026-10-29-rc11-release.md); the earlier local-only scope described below records the preceding task, not this publication authorization.
+
+## 2026-10-29 global runtime selection
+
+User-authorized [design](superpowers/specs/2026-10-29-global-runtime-design.md) and [plan](superpowers/plans/2026-10-29-global-runtime.md): one verified global `current` release, project `toolVersion: global` or an explicit pin, concrete versions frozen for services and workers. Configuration, resolver, installer, CLI/Skill routing and runtime startup share this policy. No toolkit source copy is maintained in consumers; build and compatibility adapters resolve the packaged runtime. Tests use temporary installations and synthetic data. rc.10 is a local candidate; packaging/installing it does not imply remote publication or deployment.
+
 ## 2026-10-28 content annotation extension
 
 Approved design: `docs/superpowers/specs/2026-10-28-selection-agent-comments-design.md`; implementation plan: `docs/superpowers/plans/2026-10-28-content-annotations.md`. User clarified that natural-selection content annotations are independent of the original review mode and comment batches.

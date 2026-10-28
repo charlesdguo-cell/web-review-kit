@@ -12,10 +12,10 @@ from server import serve_project
 from review_data import ReviewClient, ReviewDataError
 from data_lock import DataLockError
 from data_version import DataVersionError
-from release_manager import ReleaseError, activate_release, installed_root
+from release_manager import ReleaseError, activate_release, installed_root, validate_runtime, resolve_frozen_release
 
 
-def runtime_status(config=None):
+def runtime_status(config=None, frozen=False):
     root = Path(__file__).resolve().parent
     required = config.tool_version if config else None
     workflow = json.loads((root / 'skills/web-review/workflow.json').read_text())
@@ -24,7 +24,10 @@ def runtime_status(config=None):
     if (root / 'release-manifest.json').exists():
         installed_root(root)
         installed = True
+    if config and config.version_policy == 'global':
+        validate_runtime(config, release=root, follow_current=not frozen)
     return {'requiredToolVersion': required, 'versionMatches': required in (None, TOOL_VERSION),
+            'toolVersionPolicy': config.version_policy if config else None,
             'workflowVersion': workflow.get('workflowVersion'), 'workflowCompatible': compatible,
             'verifiedInstallation': installed}
 
@@ -38,6 +41,7 @@ def main(argv=None):
     parser = Parser(description=__doc__)
     parser.add_argument('--project', type=Path, default=Path.cwd())
     parser.add_argument('--review-url', help='Explicit review service base URL; data operations verify its projectId')
+    parser.add_argument('--request', type=Path, help='Frozen worker request; binds its recorded installed runtime and endpoint')
     commands = parser.add_subparsers(dest='command', required=True, parser_class=Parser)
     setup = commands.add_parser('setup', help='Create project configuration; local Codex is enabled by default')
     for flag in ('web-root', 'data-dir', 'jobs-dir', 'host', 'base-path', 'codex-bin', 'model'):
@@ -67,21 +71,39 @@ def main(argv=None):
     result = {'ok': False, 'projectId': None, 'toolVersion': TOOL_VERSION}
     try:
         args = parser.parse_args(argv)
+        frozen = None
+        if args.request is not None:
+            if args.command not in ('version', 'list', 'show', 'export', 'mark-changed'):
+                raise ConfigError('--request is supported only for existing worker data/version operations', code='invalid_arguments')
+            frozen = json.loads(args.request.read_text())
+            host = Path(__file__).resolve().parent
+            install = installed_root(host)
+            if (not isinstance(frozen, dict) or not isinstance(frozen.get('executionConfig'), dict) or
+                    not isinstance(frozen.get('reviewUrl'), str) or not frozen['reviewUrl'].strip()):
+                raise ReleaseError('Incomplete frozen worker request', 'request_conflict')
+            if resolve_frozen_release(args.project, install, frozen['executionConfig'], frozen.get('project')) != host:
+                raise ReleaseError('Frozen worker runtime differs from this CLI', 'request_conflict')
+            if args.review_url is not None and args.review_url.rstrip('/') != frozen['reviewUrl'].rstrip('/'):
+                raise ReleaseError('Review URL differs from the frozen request', 'request_conflict')
+            if args.command != 'version':
+                args.review_url = frozen['reviewUrl']
         if args.review_url is not None and args.command not in ('list', 'show', 'export', 'mark-changed'):
             raise ConfigError('--review-url is supported only for review data operations', code='invalid_arguments')
         if args.command == 'version':
             if (args.project / 'review.config.json').exists():
                 config = load_project_config(args.project)
-            value = {'command': 'version', **runtime_status(config)}
+            value = {'command': 'version', **runtime_status(config, frozen=frozen is not None)}
         elif args.command == 'setup':
             result.update(runtime_status())
             if (args.project / 'review.config.json').exists():
                 config = load_project_config(args.project)
+                if config.version_policy == 'global':
+                    runtime_status(config)
             config, created = setup_project(args.project, vars(args))
             value = {'command': 'setup', 'created': created}
         else:
             config = load_project_config(args.project)
-            status = runtime_status(config)
+            status = runtime_status(config, frozen=frozen is not None)
             result.update(status)
             if args.command in ('update', 'rollback'):
                 value = activate_release(config, args.target, install_root=args.install_root)
@@ -133,7 +155,9 @@ def main(argv=None):
         return_code = 2
     if config:
         result.update(projectId=config.project_id)
-        result.update(requiredToolVersion=config.tool_version, versionMatches=config.tool_version == TOOL_VERSION)
+        result.update(requiredToolVersion=config.tool_version, toolVersionPolicy=config.version_policy,
+                      versionMatches=config.tool_version == TOOL_VERSION and result.get('error') not in
+                      ('version_conflict', 'installation_context_required'))
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return return_code
 

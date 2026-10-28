@@ -1,65 +1,82 @@
-# Fixed-version installation for the first release
+# Global installation and optional project pins
 
-The first release preserves existing review and Codex behavior while adding project configuration, a reusable Skill and a verified fixed-version installation. Validate it in Morsea and one independent static project; preserve original comments, evidence and task history. Formal data migration, production deployment, multi-platform support and advanced version management are outside this release's acceptance scope.
+Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. This release is **`0.1.0-rc.11`**. It adds one global runtime default and activates it by default during installation. The preceding rc.10 was a local candidate; it is retained unchanged on machines that installed it. Verify remote availability through the exact GitHub release rather than inferring publication from a local VERSION file.
 
-Use Python 3.9+ on macOS and the single installation root **`~/.local/share/web-review-kit`**. The selected candidate is **`0.1.0-rc.9`**. VERSION alone does not mean it has been published; run the download commands only after candidate publication is recorded.
+rc.9 added inline `我：` / `Agent：` annotation authorship. rc.8 introduced independent selected-text content annotations, the aligned sidebar, persistent Agent discussions and protected page refresh. Historical rc.1–rc.9 packages retain their exact inventories, hashes and receipts.
 
-rc.9 adds explicit inline speaker prefixes (`我：` / `Agent：`) to saved annotations and their offline export; the draft remains compact. rc.8 introduced independent text-selection annotations with an original-text-aligned sidebar, a per-message Agent response switch, persistent local Codex conversations, protected page refresh and retained discussions after edits. Its new runtime module is included in the closed package manifest. The new global helper also recognizes the exact pre-annotation file inventory for rc.1–rc.7, retaining file/hash/receipt verification and the project's existing pin. Use the downloaded release's installer; installers predating rc.8 do not recognize the annotation module.
+## Install and select the global default
 
-## Install the exact candidate
-
-The repository is private: `charlesdguo-cell/web-review-kit`. Download uses the host's existing `gh` login; credentials are never bundled.
+Use an explicitly selected local archive. Installation validates the closed manifest and records a receipt; identical repeat installation is safe. Existing modified releases and unmanaged discovery paths are preserved and rejected.
 
 ```sh
-review_install="$HOME/.local/share/web-review-kit"
-review_bootstrap="$(mktemp -d)"
-gh release download v0.1.0-rc.9 --repo charlesdguo-cell/web-review-kit --pattern 'web-review-kit-0.1.0-rc.9.tar.gz*' --dir "$review_bootstrap"
-(cd "$review_bootstrap" && shasum -a 256 -c web-review-kit-0.1.0-rc.9.tar.gz.sha256)
-tar -xzf "$review_bootstrap/web-review-kit-0.1.0-rc.9.tar.gz" -C "$review_bootstrap"
-python3 "$review_bootstrap/scripts/install.py" --archive "$review_bootstrap/web-review-kit-0.1.0-rc.9.tar.gz" --install-root "$review_install" --skill-link "$HOME/.agents/skills/web-review"
+python3 /absolute/verified-bundle/scripts/install.py \
+  --archive /absolute/web-review-kit-0.1.0-rc.11.tar.gz \
+  --install-root "$HOME/.local/share/web-review-kit" \
+  --skill-link "$HOME/.agents/skills/web-review"
 ```
 
-Stop on any download or checksum failure. The installer returns absolute `installRoot`, `releaseRoot` and `skill` paths. Runtime, frontend assets and Skill live together under `releases/0.1.0-rc.9/`; a receipt records the manifest hash. Identical repeat installation is safe; local managed-file changes or conflicting content are rejected. Installation does not change project pins/data/jobs, start services, or modify global agent configuration.
+Installation selects the verified release via `INSTALL/current` by default; `--activate-global` is still accepted but no longer required. With the explicit `--skill-link` above, the Skill points at `INSTALL/current/skills/web-review`. A verified old fixed-release Skill link from the same installation may be converted to this stable link; an unrelated link or actual directory is a conflict. Selection validates the target and discovery destination before switching.
+
+Use `--no-activate-global` to install a release without changing `current` (for example, to retain a version for an explicit project pin). With that opt-out, an explicit `--skill-link` targets the installed fixed release and preserves conflicting existing links. Omitting `--skill-link` leaves discovery paths untouched in either mode. The two activation flags are mutually exclusive.
+
+This operation never edits a consumer configuration or review record, restarts services, or starts jobs. Global agent settings are not modified. Each running service/task continues with its concrete startup release; newly invoked commands and restarted services use the new default. Keep previous releases installed while their services or frozen tasks still need them.
+
+Download the exact version from private repository `charlesdguo-cell/web-review-kit` using the host's existing `gh` login, verify the accompanying SHA-256 file, and use that archive's installer. Older installers do not provide the new default. No credentials are bundled.
+
+```sh
+(
+set -eu
+review_download=$(mktemp -d)
+gh release download v0.1.0-rc.11 --repo charlesdguo-cell/web-review-kit \
+  --pattern 'web-review-kit-0.1.0-rc.11.tar.gz*' --dir "$review_download"
+cd "$review_download"
+shasum -a 256 -c web-review-kit-0.1.0-rc.11.tar.gz.sha256
+mkdir bundle
+tar -xzf web-review-kit-0.1.0-rc.11.tar.gz -C bundle
+python3 bundle/scripts/install.py \
+  --archive "$review_download/web-review-kit-0.1.0-rc.11.tar.gz" \
+  --install-root "$HOME/.local/share/web-review-kit" \
+  --skill-link "$HOME/.agents/skills/web-review"
+)
+```
+
+The subshell stops if download or checksum validation fails. A Skill file alone is not a complete installation; this bundle supplies the verified runtime and its helper together. When installing historical rc.1–rc.9 bundles with this installer, pass `--no-activate-global`: those bundles support exact pins but do not declare global-selection capability.
 
 ## Global Skill
 
-The standard installation above creates `~/.agents/skills/web-review` pointing directly at `INSTALL/releases/0.1.0-rc.9/skills/web-review`. This exact packaged Skill is used by maintainers and teammates. It includes default review delivery for HTML reports, static webpages, prototypes and demos, while preserving offline reading and explicit opt-outs. No source checkout, custom wrapper or global AGENTS.md edit is required.
+The global `~/.agents/skills/web-review` is sufficient across projects. Consumers do not need their own Skill copy, runtime copy or fixed-version links. The packaged Skill includes default comment delivery for HTML reports, static webpages, prototypes and demos, preserving offline reading and explicit opt-outs.
 
-For an already installed bundle, create the same link using `ln -s "$HOME/.local/share/web-review-kit/releases/0.1.0-rc.9/skills/web-review" "$HOME/.agents/skills/web-review"`. If a discovery path exists, inspect it first: the installer preserves conflicts. An old symlink may be removed after verifying that it points to the previous tool release, then the standard install can be repeated. Preserve an actual directory or unrelated Skill. Remove any previously added personal rule duplicating this Skill's HTML delivery default so the distributed Skill remains the common behavior source.
-
-Codex discovers Skills automatically; if this entry is missing, restart Codex. Verify the symlink target and use the packaged helper's `version` in a configured project. An older project pin remains older deliberately; global installation does not upgrade existing projects or rewrite frozen tasks.
+Codex discovers Skills automatically; restart Codex if the entry is missing. Verify discovery and use the helper's `locate`/`version` results, rather than inferring the active runtime from the Skill's visible text. `current` must reference a verified release under this installation with manifest capability `runtimeSelection: {"global": 1}`; missing, unsupported or tampered selection fails explicitly. Historical releases without that capability remain available for explicit pins. The resolver never scans for the newest release or downloads a fallback.
 
 ## Configure and use a project
 
-A global Skill is sufficient for new projects. Project-local discovery remains optional for a team checkout: use `--skill-link /absolute/consumer/.agents/skills/web-review` instead of the global destination. Existing paths are preserved on conflict. Alternatively invoke the installed helper directly; keep the complete release layout rather than copying the Skill alone.
-
 ```sh
-review_release="$HOME/.local/share/web-review-kit/releases/0.1.0-rc.9"
-python3 "$review_release/web-review.py" --project /absolute/consumer setup --web-root public
-python3 "$review_release/skills/web-review/scripts/review.py" --project /absolute/consumer locate
-python3 "$review_release/skills/web-review/scripts/review.py" --project /absolute/consumer version
-python3 "$review_release/skills/web-review/scripts/review.py" --project /absolute/consumer serve
+review_helper="$HOME/.agents/skills/web-review/scripts/review.py"
+python3 "$review_helper" --project /absolute/consumer setup --web-root public
+python3 "$review_helper" --project /absolute/consumer locate
+python3 "$review_helper" --project /absolute/consumer version
+python3 "$review_helper" --project /absolute/consumer doctor
+python3 "$review_helper" --project /absolute/consumer serve
 ```
 
-Setup writes project configuration only. Read the located workflow, verify matching health and the actual toolbar before reporting a running review URL. Local setup enables Codex by default. Fill consumer-owned source/build/check guidance, resolve the absolute CLI executable and run doctor. Verify live health `codexEnabled=true`, bridge API `available=true` and the actual toolbar control before reporting full setup. Missing prerequisites must be reported; comments alone do not satisfy this default. Use `--no-codex` for explicit comments-only use. Shared/offline review keeps Codex disabled. Existing configurations are preserved, not silently changed. Workers receive the verified install root, pinned Skill and frozen request path; they consume the original batch without dispatching another task. `version`, doctor and health distinguish actual runtime version from the project's required version.
+New setup through an installation with a selected default writes `"toolVersion": "global"`. An exact version such as `"0.1.0-rc.9"` remains an optional project override. Existing configurations are preserved; adopting global mode is an explicit project configuration change. Source-checkout setup stays pinned to its development version. Keep project identity, web/data/jobs directories, port, storage keys and source/build/check guidance in `review.config.json`.
 
-Keep schema-v1 data in its existing directory. Ordinary installation, reads, doctor and service startup do not activate metadata, rewrite timestamps or migrate comments. Preserve screenshots, attachments and old tasks. Browser export remains `prototype-review` v2; CLI evidence export is an unversioned raw comments array plus an evidence map.
+The helper resolves one concrete release for each invocation and returns `releaseRoot`, `runtimeRoot`, `installRoot`, `toolVersion` and `toolVersionPolicy`. Builds copy offline assets from that concrete runtime. Consumers that retain a legacy launch command may use a thin adapter: locate once, then run that release's `compat/server.py --project /absolute/consumer` with the existing flags. No consumer-managed installation manifest is necessary. Frozen deployment bundles must record a concrete version rather than depending on a developer's global default.
 
-## Existing consumer launcher
+Setup writes configuration only. It never launches a service or processes comments. Local setup enables Codex by default; fill the real source/build/check guidance, resolve the executable and run doctor. Before reporting complete setup verify doctor `ready=true`, matching live health with `codexEnabled=true`, bridge API `available=true` and the actual toolbar. Use `--no-codex` for explicit comments-only use. Shared/offline review keeps Codex disabled.
 
-Keep consumer-owned README and integration tests. After the authorized backup and preservation of the original launcher, link only `tools/review/server.py` to the packaged entry:
+Keep schema-v1 data in its existing directory, including screenshots, attachments and historical jobs. Reads, doctor and service startup do not migrate data or rewrite record timestamps. Back up the complete data directory externally before consumer adoption. Stop only the owned service normally and verify there are no active/pending tasks before restarting it; startup must not be used to dispatch previously queued work accidentally.
 
-```sh
-ln -s "$HOME/.local/share/web-review-kit/releases/0.1.0-rc.9/compat/server.py" /absolute/consumer/tools/review/server.py
-python3 /absolute/consumer/tools/review/server.py --open --codex
-```
+## Frozen tasks and explicit pins
 
-The adapter infers the consumer from the unresolved symlink path even outside its cwd; `--project` is also supported. It retains legacy root/data/port flags as process-local overrides. Unconfigured synthetic tests may directly use the verified package's `runtime/server.py --root ... --data ... --port ...` with Codex disabled. Import the packaged runtime in consumer tests; do not maintain another runtime source copy.
+Workers receive a verified concrete release, absolute Skill path, install root and immutable request. The helper's `--request` resolves that frozen release before consulting the global default, and verifies identity/policy, receipt and Skill. Changing `current` cannot retarget that worker. Its App Server environment carries `WEB_REVIEW_HELPER` for the verified concrete helper and `WEB_REVIEW_REQUEST_PATH` for its saved request. Helper `locate` validates this context for build resolution (including annotation tasks); it never broadens data-command authorization. Consumer build adapters should inherit these variables. Synthetic fixtures for a different project must clear inherited request context instead of reusing a real task contract. Explicit project pins continue to select their own release regardless of the global default.
 
-## Experimental capabilities deferred from first-release acceptance
+An already running service retains its loaded runtime and static resources until restarted. A global change during startup is rejected when the selected release no longer matches. Restart/build together when adopting a new default so HTTP and offline deliverables use the same release. No hot replacement or automatic restart is performed.
 
-The existing update/rollback code and historical candidate compatibility are retained as experimental implementation, not the recommended first-release workflow. Automatic upgrades, rollback hardening, cross-root relocation and old-candidate transitions are deferred to separate work. Do not use comment processing as permission to change versions or entrypoints.
+The older per-project `update`/`rollback` commands remain experimental. They require normal service/job shutdown and verify installation identity. Cross-root relocation, automatic network updates, data migration and production deployment remain outside this feature. Comment processing never grants permission to change global selection, project policy or entrypoints.
 
-The completed small guard binds installed-helper update/rollback to its own verified root before dispatch; mismatching global or command-level roots are rejected. Source/API activation requires explicit `install_root`, and services/jobs must be stopped normally. Cross-root relocation is unsupported. Do not overwrite unmanaged discovery paths. rc.1 and rc.2 archives/tags remain historical evidence; no additional legacy compatibility is required for this first-release gate.
+## Packaging and validation
 
-Maintainer packaging uses `python3 scripts/package.py --destination /absolute/output`; VERSION is the only version input. The closed manifest covers shipped files, hashes, schema/workflow contracts, browser export v2 and the fixed html2canvas patch. Packaging and local tests do not imply publication, consumer integration, real Codex success or user acceptance.
+Use `python3 scripts/package.py --destination /absolute/output`; VERSION is the only version input. The deterministic closed manifest covers runtime/Skill files, hashes, schema/workflow contracts, browser export v2 and the unchanged html2canvas dependency/license/patch. Use the new bundle's installer for global activation; old installers do not implement this option.
+
+Run the independent Python discovery and relevant isolated headless browser suites from README. Global-selection tests use temporary installations, synthetic projects and frozen requests; they do not modify real review data or launch real Codex jobs. Local checks do not establish real-model behavior, remote publication, deployment or user acceptance.

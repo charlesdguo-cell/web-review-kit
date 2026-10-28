@@ -1,6 +1,7 @@
 """One persisted Codex conversation, with live steering through the stdio app server."""
 import json
 import os
+from pathlib import Path
 import queue
 import signal
 import subprocess
@@ -25,10 +26,18 @@ class AppServer:
         self.serial = 0
         self.incoming = queue.Queue()
         self.responses = {}
-        self.errors = (directory / 'stderr.log').open('a') if log_events else open(os.devnull, 'a')
-        self.events = (directory / 'events.jsonl').open('a') if log_events else open(os.devnull, 'a')
         environment = dict(os.environ)
         environment.pop('CODEX_THREAD_ID', None)
+        for name in ('WEB_REVIEW_REQUEST_PATH', 'WEB_REVIEW_HELPER'):
+            environment.pop(name, None)
+        execution = request.get('executionConfig') or {}
+        if execution.get('installRoot'):
+            from release_manager import resolve_frozen_release
+            release = resolve_frozen_release(request['project'], execution['installRoot'], execution, request.get('project'))
+            environment['WEB_REVIEW_REQUEST_PATH'] = str(Path(directory).resolve() / 'request.json')
+            environment['WEB_REVIEW_HELPER'] = str(release / 'skills/web-review/scripts/review.py')
+        self.errors = (directory / 'stderr.log').open('a') if log_events else open(os.devnull, 'a')
+        self.events = (directory / 'events.jsonl').open('a') if log_events else open(os.devnull, 'a')
         self.process = subprocess.Popen(
             [request['executable'], 'app-server', '--listen', 'stdio://',
              '-c', 'approval_policy="never"', '-c', 'sandbox_mode="danger-full-access"'],

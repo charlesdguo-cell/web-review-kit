@@ -82,14 +82,13 @@ def execution_config_for(config):
     if config.codex.get('model'):
         codex['model'] = config.codex['model']
     result = {'projectId': config.project_id, 'toolVersion': config.tool_version,
+            'toolVersionPolicy': config.version_policy,
             'guidance': copy.deepcopy(config.guidance), 'codex': codex,
             'skillPath': str(skill_path())}
     release = Path(__file__).resolve().parent.parent
-    if (release / 'release-manifest.json').exists():
-        from release_manager import installed_root, resolve_project_release
-        install = installed_root(release)
-        if resolve_project_release(config.project_root, install) != release:
-            raise ValueError('Worker runtime differs from the project pin')
+    from release_manager import validate_runtime
+    install = validate_runtime(config, release=release, follow_current=False)
+    if install is not None:
         result['installRoot'] = str(install)
     return result
 
@@ -160,9 +159,20 @@ class CodexTasks(AnnotationTasksMixin):
                 'reason': '' if self.executable and os.access(self.executable, os.X_OK) else '未检测到本机 Codex，请安装或在启动服务时指定 --codex-bin。',
                 'job': self.current()}
 
+    def _worker_path(self, directory):
+        worker_path = Path(__file__).resolve()
+        request = json.loads((directory / 'request.json').read_text())
+        execution = request.get('executionConfig') or {}
+        if execution.get('installRoot'):
+            from release_manager import resolve_frozen_release
+            release = resolve_frozen_release(self.project, execution['installRoot'], execution, request.get('project'))
+            worker_path = release / 'runtime/codex_tasks.py'
+        return worker_path
+
     def _spawn(self, directory, handle):
+        worker_path = self._worker_path(directory)
         with (directory / 'worker.log').open('ab') as log:
-            worker = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--worker', str(directory), str(handle.fileno())],
+            worker = subprocess.Popen([sys.executable, str(worker_path), '--worker', str(directory), str(handle.fileno())],
                                       stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                       pass_fds=(handle.fileno(),), start_new_session=True)
         self.workers.append(worker)
@@ -205,8 +215,9 @@ class CodexTasks(AnnotationTasksMixin):
                 write_json(directory / 'request.json', request)
                 self._spawn(directory, handle)
                 write_json(self.output / 'current.json', {'id': job['id']})
-            except OSError:
-                job.update(status='failed', error='无法启动本机 Codex，请检查安装与目录权限。', finishedAt=time.time())
+            except (OSError, ValueError) as error:
+                detail = '任务冻结版本或项目配置不匹配：' + str(error) if getattr(error, 'code', None) else '无法启动本机 Codex，请检查安装与目录权限。'
+                job.update(status='failed', error=detail, finishedAt=time.time())
                 write_json(directory / 'status.json', job)
                 raise ValueError(job['error'])
             finally:
@@ -244,6 +255,14 @@ class CodexTasks(AnnotationTasksMixin):
                     # completed jobs have no background resume queue, so refuse
                     # before persisting an inbox message that would be stranded.
                     raise TaskConflict('其他 Agent 会话正在处理，消息尚未发送；请等待完成后重试。')
+                if handle:
+                    try:
+                        # A historical request may no longer match an explicitly
+                        # changed project policy. Refuse before changing history.
+                        self._worker_path(directory)
+                    except (OSError, ValueError):
+                        handle.close()
+                        raise
                 message = {'id': message_id, 'role': 'user', 'text': text.strip(),
                            'createdAt': time.time(), 'status': 'queued'}
                 write_json(path, message)
@@ -257,8 +276,9 @@ class CodexTasks(AnnotationTasksMixin):
                         (directory / 'cancel').unlink(missing_ok=True)
                         write_json(directory / 'status.json', job)
                         self._spawn(directory, handle)
-                except OSError:
-                    message.update(status='failed', error='会话启动失败，消息未发送，请重新发送。')
+                except (OSError, ValueError) as error:
+                    detail = '任务冻结版本或项目配置不匹配，消息未发送：' + str(error) if getattr(error, 'code', None) else '会话启动失败，消息未发送，请重新发送。'
+                    message.update(status='failed', error=detail)
                     write_json(path, message)
                     job.update(status='failed', error=message['error'], finishedAt=time.time())
                     write_json(directory / 'status.json', job)
@@ -299,6 +319,8 @@ def legacy_prompt_for(request):
 def annotation_prompt_for(request):
     execution = request.get('executionConfig') or {}
     guidance = execution.get('guidance', {})
+    build_context = ('构建环境已通过 WEB_REVIEW_REQUEST_PATH 与 WEB_REVIEW_HELPER 固定到本任务版本；保留环境变量，无需手动覆写。'
+                     if execution.get('installRoot') else '')
     return f'''你是本机页面内容批注的独立 Agent。本任务只有这一条批注，与旧评审评论和批次无关。
 项目目录：{request['project']}
 评审入口：{request['reviewUrl']}
@@ -308,6 +330,7 @@ def annotation_prompt_for(request):
 允许修改的源码范围：{json.dumps(guidance.get('sourceRoots', []), ensure_ascii=False)}
 构建命令（argv）：{json.dumps(guidance.get('buildCommands', []), ensure_ascii=False)}
 检查命令（argv）：{json.dumps(guidance.get('checkCommands', []), ensure_ascii=False)}
+{build_context}
 冻结批注快照（包含页面、原文引用、截图和附件证据）：
 {json.dumps(request['annotation'], ensure_ascii=False, indent=2)}
 已保存的历史消息（只作讨论上下文，不补发、不作为本轮执行指令）：
@@ -332,6 +355,8 @@ def prompt_for(request):
     if execution is None:
         return legacy_prompt_for(request)
     guidance = execution.get('guidance', {})
+    build_context = ('构建环境已通过 WEB_REVIEW_REQUEST_PATH 与 WEB_REVIEW_HELPER 固定到本任务版本；保留环境变量，无需手动覆写。'
+                     if execution.get('installRoot') else '')
     return f'''你是本机网页评审派发的独立 worker，直接处理当前冻结批次，不要递归启动评审任务、其他 Codex 或子代理。
 项目目录：{request['project']}
 项目标识：{execution.get('projectId', '')}
@@ -345,6 +370,7 @@ def prompt_for(request):
 允许修改的源码范围：{json.dumps(guidance.get('sourceRoots', []), ensure_ascii=False)}
 构建命令（argv）：{json.dumps(guidance.get('buildCommands', []), ensure_ascii=False)}
 检查命令（argv）：{json.dumps(guidance.get('checkCommands', []), ensure_ascii=False)}
+{build_context}
 本次评论快照（共 {len(request['comments'])} 条，按编号从旧到新）：
 {json.dumps(request['comments'], ensure_ascii=False, indent=2)}
 

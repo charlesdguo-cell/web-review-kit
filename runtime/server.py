@@ -648,6 +648,7 @@ def configured_health(config):
                                           separators=(',', ':')).encode()).hexdigest()
     health = {'service': 'prototype-review', 'projectId': config.project_id,
               'toolVersion': TOOL_VERSION, 'requiredToolVersion': config.tool_version,
+              'toolVersionPolicy': config.version_policy,
               'versionMatches': TOOL_VERSION == config.tool_version, 'schemaVersion': 1,
               'configurationHash': fingerprint,
               'server': {name: config.server[name] for name in ('host', 'port', 'basePath', 'publicOrigins')},
@@ -662,11 +663,8 @@ def serve_project(config: 'ProjectConfig') -> None:
     from project_config import ConfigError, TOOL_VERSION
     if config.tool_version != TOOL_VERSION:
         raise ConfigError('Actual runtime VERSION differs from project requirement', 3, 'version_conflict')
-    if (TOOLS.parent / 'release-manifest.json').exists():
-        from release_manager import installed_root, resolve_project_release
-        install = installed_root(TOOLS.parent)
-        if resolve_project_release(config.project_root, install) != TOOLS.parent:
-            raise ConfigError('Service runtime differs from verified project release', 3, 'version_conflict')
+    from release_manager import validate_runtime
+    validate_runtime(config, release=TOOLS.parent)
     options = config.server
     tasks = None
     if config.codex['enabled']:
@@ -692,6 +690,7 @@ def serve_project(config: 'ProjectConfig') -> None:
         # Shared health also has a content build hash. It is not a service identity.
         expected = configured_health(config)
         if health and {k: v for k, v in health.items() if k != 'build'} == expected:
+            validate_runtime(config, release=TOOLS.parent)
             print(json.dumps({**result, 'reused': True}, ensure_ascii=False), flush=True)
             return
         raise ConfigError('Data directory or port is owned by another service, project or configuration',
@@ -700,8 +699,10 @@ def serve_project(config: 'ProjectConfig') -> None:
     from project_config import load_project_config
     try:
         current = load_project_config(config.project_root)
-        if current.project_id != config.project_id or current.tool_version != config.tool_version:
+        if (current.project_id != config.project_id or current.tool_version != config.tool_version or
+                current.version_policy != config.version_policy):
             raise ConfigError('Project pin/identity changed during service startup', 3, 'version_conflict')
+        validate_runtime(config, release=TOOLS.parent)
     except BaseException:
         server.server_close()
         raise

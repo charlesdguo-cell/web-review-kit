@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -22,6 +23,11 @@ def load_router():
 
 class SkillRouterTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in ('WEB_REVIEW_REQUEST_PATH', 'WEB_REVIEW_HELPER'):
+            os.environ.pop(name, None)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.project = self.root / 'consumer project'

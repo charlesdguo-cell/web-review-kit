@@ -7,7 +7,7 @@
   "properties": {
     "configVersion": {"const": 1},
     "projectId": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
-    "toolVersion": {"$ref": "#/$defs/text"},
+    "toolVersion": {"$ref": "#/$defs/text", "description": "Explicit installed release version, or global to follow the verified installation current selection. Services and jobs freeze a concrete version."},
     "webRoot": {"$ref": "#/$defs/text"},
     "dataDir": {"$ref": "#/$defs/text"},
     "jobsDir": {"$ref": "#/$defs/text"},

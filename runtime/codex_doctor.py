@@ -26,6 +26,12 @@ def doctor(config: ProjectConfig) -> dict:
         checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
 
     version_ok = config.tool_version == TOOL_VERSION
+    if version_ok:
+        try:
+            from release_manager import validate_runtime
+            validate_runtime(config)
+        except (OSError, ValueError):
+            version_ok = False
     check('runtimeVersion', version_ok, 'Actual ' + TOOL_VERSION + '; required ' + config.tool_version)
     root = Path(__file__).resolve().parent.parent
     try:
@@ -91,6 +97,7 @@ def doctor(config: ProjectConfig) -> dict:
                 check('authentication', False, 'Account status unavailable through the supported account/read interface')
     ready = all(item['ok'] for item in checks)
     return {'checks': checks, 'ready': ready, 'toolVersion': TOOL_VERSION,
+            'toolVersionPolicy': config.version_policy,
             'requiredToolVersion': config.tool_version, 'versionMatches': version_ok,
             'capabilities': {'review': bool(environment_ok and data_ok and version_ok and workflow_ok),
                              'codex': bool(ready and local_enabled), 'sharedReview': shared,
