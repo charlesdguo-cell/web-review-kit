@@ -18,7 +18,7 @@ from project_config import load_project_config
 
 # Closed allowlist: untracked data, credentials, logs and consumer assets cannot sneak in.
 RELEASE_FILES = '''VERSION README.md AGENTS.md web-review.py
-runtime/server.py runtime/codex_tasks.py runtime/codex_session.py runtime/codex_doctor.py
+runtime/server.py runtime/codex_tasks.py runtime/codex_session.py runtime/codex_doctor.py runtime/annotation_tasks.py
 runtime/project_config.py runtime/review_data.py runtime/data_lock.py runtime/data_version.py
 runtime/merge_review_data.py runtime/release_manager.py runtime/review.js runtime/review.css
 runtime/html2canvas.min.js runtime/LICENSE.html2canvas-pro
@@ -27,6 +27,10 @@ skills/web-review/references/project-setup.md skills/web-review/references/comme
 schemas/project-config.schema.json schemas/review-data-v1.schema.json
 scripts/package.py scripts/install.py compat/server.py docs/releases.md docs/browser-identity.md
 docs/source-map.md'''.split()
+# These published candidates predate the independent annotation runtime. A newer
+# global Skill must still resolve their pinned, closed inventories unchanged.
+PRE_ANNOTATION_VERSIONS = frozenset('0.1.0-rc.' + str(number) for number in range(1, 8))
+PRE_ANNOTATION_FILES = frozenset(RELEASE_FILES) - {'runtime/annotation_tasks.py'}
 DEPENDENCY_SHA256 = 'e13cf4fb0919313c321783fb67b51b18dd0e7e90d33ba9fc50706278f070d363'
 LEGACY_RC1_MANIFEST_SHA256 = '50cc67d2ca9c36b066253721f87ccd41b5be6f9c522e851803cc5a2656b3fc88'
 
@@ -118,6 +122,8 @@ def verify_release(path: Path) -> dict:
     if manifest.get('version') != version:
         raise ReleaseError('Manifest version differs from VERSION', 'version_conflict')
     required = set(RELEASE_FILES)
+    if version in PRE_ANNOTATION_VERSIONS and set(manifest['files']) == PRE_ANNOTATION_FILES:
+        required = PRE_ANNOTATION_FILES
     if set(manifest['files']) != required:
         raise ReleaseError('Release file inventory is incomplete or contains unmanaged files')
     actual = set()

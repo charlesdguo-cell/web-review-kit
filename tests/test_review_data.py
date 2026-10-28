@@ -153,3 +153,37 @@ class ReviewDataTests(unittest.TestCase):
             urlopen(request)
         self.assertEqual(raised.exception.code, 409)
         self.assertEqual((self.config.data_dir / 'comments.json').read_bytes(), before)
+
+    def test_export_includes_separate_annotations_and_public_replies(self):
+        annotation = {'id': 'export-annotation', 'text': 'explain', 'status': 'open',
+                      'page': {'path': '/'}, 'anchor': {'kind': 'text', 'selector': 'body', 'selectedText': 'quote'},
+                      'screenshotData': PNG, 'attachments': [{'id': 'annotation-attachment', 'name': 'evidence.png', 'dataUrl': PNG}]}
+        request = Request(self.base + '/__review/annotations', json.dumps({'annotation': annotation}).encode(),
+                          headers={'Origin': self.base, 'Content-Type': 'application/json'})
+        with urlopen(request) as response:
+            saved = json.load(response)['annotation']
+        folder = self.config.data_dir / 'annotation-threads'
+        folder.mkdir()
+        (folder / 'export-annotation.json').write_text(json.dumps({'id': saved['id'], 'status': 'completed',
+            'result': 'public answer', 'messages': [{'id': 'assistant-export', 'role': 'assistant', 'text': 'answer',
+                                                   'turnId': 'opaque-export-turn', 'createdAt': 1}],
+            'canChat': True, 'threadId': 'private-thread', 'project': '/private/project'}))
+        request = Request(self.base + '/__review/annotations/message',
+                          json.dumps({'annotationId': saved['id'], 'messageId': 'a' * 32,
+                                      'text': '保存回复 /Users/private/person/file.txt', 'autoReply': False}).encode(),
+                          headers={'Origin': self.base, 'Content-Type': 'application/json'})
+        with urlopen(request):
+            pass
+        exported = self.client.export(self.root / 'annotation-export')
+        values = json.loads((self.root / 'annotation-export/annotations.json').read_text())
+        self.assertEqual(exported['annotations'], 1)
+        self.assertEqual(values[0]['conversation']['result'], 'public answer')
+        self.assertNotIn('threadId', values[0]['conversation'])
+        self.assertEqual(values[0]['conversation']['messages'][0]['turnId'], 'opaque-export-turn')
+        message = values[0]['conversation']['messages'][1]
+        self.assertEqual(message['status'], 'saved')
+        self.assertFalse(message['autoReply'])
+        self.assertIn('保存回复', message['text'])
+        self.assertNotIn('/Users/private', json.dumps(values))
+        self.assertEqual(len(exported['evidence']), 4)
+        self.assertEqual(self.client.list(), [self.saved])

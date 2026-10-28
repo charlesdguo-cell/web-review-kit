@@ -41,8 +41,10 @@ class ReviewClient:
                 detail = json.load(error).get('error', str(error))
             except (ValueError, AttributeError):
                 detail = str(error)
-            raise ReviewDataError(str(detail), 'review_conflict' if error.code == 409 else 'review_http_error',
-                                  3 if error.code == 409 else 2) from error
+            wrapped = ReviewDataError(str(detail), 'review_conflict' if error.code == 409 else 'review_http_error',
+                                      3 if error.code == 409 else 2)
+            wrapped.http_status = error.code
+            raise wrapped from error
         except (OSError, ValueError) as error:
             raise ReviewDataError('Review request failed: ' + str(error)) from error
 
@@ -94,14 +96,26 @@ class ReviewClient:
 
     def export(self, destination: Path) -> dict:
         comments = self.list()
+        # Older pinned services have no annotation route. Preserve their export
+        # contract while carrying the independent collection on capable services.
+        try:
+            response = self._request('GET', '__review/annotations')
+            annotations = response.get('annotations') if isinstance(response, dict) else None
+            if not isinstance(annotations, list) or any(not isinstance(item, dict) for item in annotations):
+                raise ReviewDataError('Invalid content annotations response')
+        except ReviewDataError as error:
+            if getattr(error, 'http_status', None) != 404:
+                raise
+            annotations = []
         destination = Path(destination)
         destination.mkdir(parents=True, exist_ok=False)
         # Raw URLs and all extensions remain intact; local copies have a separate map.
         (destination / 'comments.json').write_text(json.dumps(comments, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        (destination / 'annotations.json').write_text(json.dumps(annotations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         prefix = urlsplit(self.base_url).path.rstrip('/') + '/__review/'
         evidence = []
         seen = set()
-        for comment in comments:
+        for comment in comments + annotations:
             urls = [comment.get('screenshot')] + [image.get('url') for image in comment.get('attachments', []) if isinstance(image, dict)]
             for value in urls:
                 if not isinstance(value, str):
@@ -126,4 +140,4 @@ class ReviewClient:
                 seen.add(value)
                 evidence.append({'url': value, 'path': relative.as_posix()})
         (destination / 'evidence.json').write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-        return {'directory': str(destination.resolve()), 'comments': len(comments), 'evidence': evidence}
+        return {'directory': str(destination.resolve()), 'comments': len(comments), 'annotations': len(annotations), 'evidence': evidence}

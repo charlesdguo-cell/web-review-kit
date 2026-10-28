@@ -47,6 +47,25 @@ class ReleaseTests(unittest.TestCase):
     def installed(self, version=None):
         return install_release(self.package(version), self.install)
 
+    def historical_package(self, version, omitted=('runtime/annotation_tasks.py',)):
+        # Synthetic package layout only: no consumer files or published archives.
+        with tarfile.open(self.package(version), 'r:gz') as bundle:
+            contents = {name: bundle.extractfile(name).read() for name in bundle.getnames()
+                        if name not in omitted}
+        manifest = json.loads(contents['release-manifest.json'])
+        for name in omitted:
+            manifest['files'].pop(name)
+        encode = lambda value: (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + '\n').encode()
+        manifest['source']['treeSha256'] = hashlib.sha256(encode(manifest['files'])).hexdigest()
+        contents['release-manifest.json'] = encode(manifest)
+        archive = self.root / ('historical-' + version + '.tar.gz')
+        with tarfile.open(archive, 'w:gz') as bundle:
+            for name, data in contents.items():
+                item = tarfile.TarInfo(name)
+                item.size = len(data)
+                bundle.addfile(item, io.BytesIO(data))
+        return archive
+
     def data_hashes(self):
         return {str(p.relative_to(self.config.data_dir)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in self.config.data_dir.rglob('*') if p.is_file()}
@@ -72,6 +91,73 @@ class ReleaseTests(unittest.TestCase):
         match = re.search(r"format:'prototype-review',version:(\d+),comments:", producer)
         self.assertIsNotNone(match, 'Locate the actual browser export envelope')
         self.assertEqual(verify_release(release)['exportFormats'], [int(match.group(1))])
+
+    def test_pre_annotation_inventory_is_limited_to_known_candidates(self):
+        for number in range(1, 8):
+            version = '0.1.0-rc.' + str(number)
+            with self.subTest(version=version):
+                release = install_release(self.historical_package(version), self.install)
+                self.assertEqual(verify_release(release)['version'], version)
+                self.assertFalse((release / 'runtime/annotation_tasks.py').exists())
+        for version in ('0.1.0-rc.0', '0.1.0-rc.8', '0.1.0-rc.9', '0.2.0-test'):
+            with self.subTest(rejected_version=version):
+                with self.assertRaises(ReleaseError):
+                    install_release(self.historical_package(version), self.install)
+
+    def test_new_helper_routes_historical_pins_without_mutation(self):
+        new = self.installed('0.2.0-test')
+        helper = new / 'skills/web-review/scripts/review.py'
+        job = self.config.jobs_dir / 'historical'
+        job.mkdir(parents=True)
+        (job / 'status.json').write_text('{"status":"completed"}')
+        for version in ('0.1.0-rc.3', '0.1.0-rc.7'):
+            with self.subTest(version=version):
+                old = install_release(self.historical_package(version), self.install)
+                config_path = self.project / 'review.config.json'
+                config = json.loads(config_path.read_text())
+                config['toolVersion'] = version
+                config_path.write_text(json.dumps(config))
+                paths = [path for root in (self.project, self.install) for path in root.rglob('*')
+                         if path.is_file() and '__pycache__' not in path.parts]
+                before = {path: path.read_bytes() for path in paths}
+                for command in ('locate', 'version'):
+                    result = subprocess.run([sys.executable, str(helper), '--project', str(self.project), command],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    value = json.loads(result.stdout)
+                    self.assertEqual(value['toolVersion'], version)
+                    if command == 'locate':
+                        self.assertEqual(value['releaseRoot'], str(old))
+                    else:
+                        self.assertTrue(value['verifiedInstallation'])
+                self.assertEqual(resolve_project_release(self.project, self.install), old)
+                self.assertEqual({path: path.read_bytes() for path in paths}, before)
+                self.assertFalse((self.config.data_dir / 'meta.json').exists())
+
+    def test_historical_inventory_retains_integrity_and_receipt_checks(self):
+        release = install_release(self.historical_package('0.1.0-rc.7'), self.install)
+        asset = release / 'runtime/review.js'
+        original = asset.read_bytes()
+        asset.write_bytes(original + b'\n// modified')
+        with self.assertRaises(ReleaseError):
+            verify_release(release)
+        asset.write_bytes(original)
+        extra = release / 'runtime/unmanaged.py'
+        extra.write_text('unexpected')
+        with self.assertRaises(ReleaseError):
+            verify_release(release)
+        extra.unlink()
+        with self.assertRaises(ReleaseError):
+            install_release(self.historical_package('0.1.0-rc.6',
+                            omitted=('runtime/annotation_tasks.py', 'runtime/server.py')), self.install)
+        config_path = self.project / 'review.config.json'
+        config = json.loads(config_path.read_text())
+        config['toolVersion'] = '0.1.0-rc.7'
+        config_path.write_text(json.dumps(config))
+        receipt = self.install / 'receipts/0.1.0-rc.7.json'
+        receipt.write_text('{"version":"0.1.0-rc.7","manifestSha256":"wrong"}')
+        with self.assertRaises(ReleaseError):
+            resolve_project_release(self.project, self.install)
 
     def test_cross_root_api_and_installed_cli_reject_without_changing_pin(self):
         old = self.installed()

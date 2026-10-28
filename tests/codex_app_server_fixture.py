@@ -17,6 +17,7 @@ incoming = queue.Queue()
 active = None
 deadline = None
 mode = 'ok'
+thread_id = 'fixture-thread'
 
 
 def read():
@@ -30,7 +31,7 @@ def emit(value):
 
 
 def event(method, **params):
-    emit({'method': method, 'params': {'threadId': 'fixture-thread', **params}})
+    emit({'method': method, 'params': {'threadId': thread_id, **params}})
 
 
 def reply(text):
@@ -84,7 +85,11 @@ while True:
         result = {'account': None if behavior in ('unauthenticated', 'api-provider') else {'type': 'chatgpt', 'email': 'SENSITIVE@example.test'},
                   'requiresOpenaiAuth': behavior != 'api-provider'}
     elif method in ('thread/start', 'thread/resume'):
-        result = {'thread': {'id': 'fixture-thread'}}
+        if method == 'thread/resume':
+            thread_id = params['threadId']
+        elif (root / 'distinct-threads').exists():
+            thread_id = 'fixture-' + uuid.uuid4().hex
+        result = {'thread': {'id': thread_id}}
     elif method == 'turn/start':
         mode = (root / 'behavior').read_text() if (root / 'behavior').exists() else 'ok'
         prompt = params['input'][0]['text']

@@ -15,7 +15,7 @@
   const pageIdentity = {strategy:'pathname',queryKeys:[],includeHash:false,...attributeJSON('pageIdentity')};
   const browserStorage = {namespace:projectId,legacyKeys:[],...attributeJSON('browserStorage')};
   const namespace = browserStorage.namespace || projectId;
-  const storageKeys = Object.fromEntries(['comments','codexDrafts','codexRequests'].map(kind=>[
+  const storageKeys = Object.fromEntries(['comments','codexDrafts','codexRequests','annotations','annotationDraft','annotationChats','annotationRequests','annotationReplyAgent','annotationView'].map(kind=>[
     kind,namespace?'prototype.review.'+encodeURIComponent(namespace)+'.'+kind:
       kind==='comments'?'prototype.review.v1':'prototype.review.'+kind
   ]));
@@ -61,7 +61,7 @@
     host.dataset.html2canvasIgnore = 'true';
     host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
     const ui = host.attachShadow({mode: 'open'});
-    ui.innerHTML = `<link rel="stylesheet" href="${new URL('review.css', assets)}"><div id="toolbar"></div><div id="outline"></div><div id="markers"></div><div id="editor"></div><div id="list"></div><div id="codex-panel"></div><div id="notice" role="status" aria-live="polite"></div>`;
+    ui.innerHTML = `<link rel="stylesheet" href="${new URL('review.css', assets)}"><div id="toolbar"></div><div id="outline"></div><div id="markers"></div><div id="editor"></div><div id="list"></div><div id="codex-panel"></div><div id="annotation-highlights"></div><div id="annotation-selection"></div><div id="annotation-panel"></div><div id="notice" role="status" aria-live="polite"></div>`;
     document.documentElement.append(host);
     const pageStyle = document.createElement('style');
     pageStyle.textContent = 'html[data-prototype-review-active] body *{cursor:crosshair!important}html[data-prototype-review-active] svg path,html[data-prototype-review-active] svg line,html[data-prototype-review-active] svg polyline{pointer-events:visiblePainted!important}';
@@ -74,6 +74,404 @@
     try{state.chatDrafts=readStorage(sessionStorage,'codexDrafts','{}');}catch{}
     try{state.chatRequests=readStorage(sessionStorage,'codexRequests','{}');}catch{}
     let shotPromise = null, screenshot = null, libraryPromise = null, noticeTimer, listFocus = null, toolbarMarkup = '';
+
+    const annotationViewKey=page=>storageKeys.annotationView+'.'+encodeURIComponent(page);
+    function readAnnotationView(page){try{const value=JSON.parse(sessionStorage.getItem(annotationViewKey(page)));return value?.version===1?value:null;}catch{return null;}}
+    let savedAnnotationView=readAnnotationView(pageKey(location.href));
+    const ann={filter:['open','all','resolved'].includes(savedAnnotationView?.filter)?savedAnnotationView.filter:'open',layout:'drawer',reserve:null,tail:null,expanded:savedAnnotationView?.expanded||{},replyAgent:readStorage(localStorage,'annotationReplyAgent','{}'),items:[],open:!!savedAnnotationView?.open,current:savedAnnotationView?.current||null,draftView:true,selection:null,draft:readStorage(localStorage,'annotationDraft','null'),chats:readStorage(localStorage,'annotationChats','{}'),requests:readStorage(localStorage,'annotationRequests','{}'),agent:{enabled:false,available:false,reason:endpoint?'正在连接 Agent':'离线模式仅保存批注，不会启动 Agent'},sending:false,adding:false,error:'',selectionTimer:null,shot:null,viewReady:false,loadedBuild:script.dataset.build||null,editVersions:new Map(),observedEdits:false,refreshPending:null,reloading:false,composing:false,externalValues:new WeakMap(),externalDirty:new Set()};
+    const requestId=()=>{const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return [...bytes].map(n=>n.toString(16).padStart(2,'0')).join('');};
+    ann.viewPage=pageKey(location.href);ann.viewEpoch=0;ann.restoringView=null;
+    const annotationCardResize=new ResizeObserver(()=>{if(ann.open)requestAnimationFrame(layoutAnnotationCards);});
+    const annotationIcons={
+      comment:'<svg class="annotation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 18 3 21V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7Z"></path><path d="M8 8h8M8 12h5"></path></svg>',
+      send:'<svg class="annotation-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 15V5m-4 4 4-4 4 4"></path></svg>',
+      stop:'<svg class="annotation-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" focusable="false"><rect x="5" y="5" width="10" height="10" rx="1.5"></rect></svg>'
+    };
+    const annotationBusy=c=>['queued','starting','running','stopping'].includes(c?.status);
+    const annotationCanSend=()=>!!endpoint&&!shared&&codexEnabled&&ann.agent.enabled&&ann.agent.available;
+    function annotationStorage(kind,value){try{localStorage.setItem(storageKeys[kind],JSON.stringify(value));return true;}catch{ann.error='浏览器存储空间不足，请导出批注后重试';return false;}}
+    function storeAnnotationDraft(){return annotationStorage('annotationDraft',ann.draft);}
+    function currentAnnotation(){return ann.items.find(c=>c.id===ann.current);}
+    function annotationReason(){return shared?'共享模式仅保存批注，Agent 不可用':!endpoint?'离线模式仅保存批注，不会启动 Agent':ann.agent.reason||'当前未启用 Agent，仅保存批注';}
+    function annotationReadingBookmark(){
+      const root=query(script.dataset.annotationRoot)||document.querySelector('main,article,[role=main]')||document.body;
+      const box=root.getBoundingClientRect(),x=Math.max(8,Math.min(innerWidth-340,box.left+Math.min(90,box.width/3))),y=Math.min(110,innerHeight/4);
+      const element=document.elementFromPoint(x,y)?.closest('p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,section,article,main');
+      if(!element||element.contains(host))return null;
+      return {selector:path(element),top:element.getBoundingClientRect().top};
+    }
+    function saveAnnotationView(){
+      if(!ann.viewReady||ann.viewPage!==pageKey(location.href))return false;
+      const root=annotationScrollRoot(),field=ui.activeElement,view={version:1,open:ann.open,current:ann.current,filter:ann.filter,expanded:ann.expanded,
+        scrollTop:root.scrollTop,scrollLeft:root.scrollLeft,windowX:scrollX,windowY:scrollY,drawerScrollTop:ui.querySelector('.annotation-sidebar')?.scrollTop||0,
+        reading:annotationReadingBookmark(),focus:['annotation-input','annotation-followup'].includes(field?.id)?{id:field.id,start:field.selectionStart,end:field.selectionEnd}:null};
+      try{sessionStorage.setItem(annotationViewKey(ann.viewPage),JSON.stringify(view));return true;}catch{return false;}
+    }
+    function syncAnnotationIdentity(){
+      const page=pageKey(location.href);if(page===ann.viewPage)return;
+      // The previous view is saved as it changes, before hash/history navigation.
+      // Never write the old card selection into the new page's storage key.
+      ann.viewPage=page;ann.viewEpoch++;ann.viewReady=false;ann.restoringView=null;
+      savedAnnotationView=readAnnotationView(page);
+      ann.open=!!savedAnnotationView?.open;ann.current=savedAnnotationView?.current||null;
+      ann.filter=['open','all','resolved'].includes(savedAnnotationView?.filter)?savedAnnotationView.filter:'open';ann.expanded=savedAnnotationView?.expanded||{};
+      ann.editVersions.clear();ann.observedEdits=false;ann.refreshPending=null;ann.selection=null;
+    }
+    async function restoreAnnotationView(){
+      if(ann.viewReady)return;
+      if(ann.restoringView)return ann.restoringView;
+      const saved=savedAnnotationView,epoch=ann.viewEpoch;savedAnnotationView=null;
+      const restoring=(async()=>{
+      if(saved){
+        const link=ui.querySelector('link');
+        if(!link.sheet)await new Promise(resolve=>{link.addEventListener('load',resolve,{once:true});link.addEventListener('error',resolve,{once:true});setTimeout(resolve,1000);});
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        if(epoch!==ann.viewEpoch)return;
+        syncAnnotationLayout();renderAnnotations();drawAnnotations();
+        const root=annotationScrollRoot(),number=value=>Number.isFinite(value)?value:0;
+        window.scrollTo(number(saved.windowX),number(saved.windowY));root.scrollLeft=number(saved.scrollLeft);root.scrollTop=number(saved.scrollTop);
+        const reading=saved.reading&&query(saved.reading.selector);
+        if(reading&&Number.isFinite(saved.reading.top))annotationScrollBy(reading.getBoundingClientRect().top-saved.reading.top);
+        drawAnnotations();
+        const sidebar=ui.querySelector('.annotation-sidebar');if(sidebar&&ann.layout==='drawer')sidebar.scrollTop=number(saved.drawerScrollTop);
+        const field=saved.focus&&$(saved.focus.id);if(field?.value){field.focus({preventScroll:true});field.setSelectionRange(number(saved.focus.start),number(saved.focus.end));}
+      }
+      if(epoch===ann.viewEpoch){ann.viewReady=true;saveAnnotationView();}
+      })();
+      ann.restoringView=restoring;
+      try{await restoring;}finally{if(ann.restoringView===restoring)ann.restoringView=null;}
+    }
+    function annotationFieldValue(field){
+      if(field.isContentEditable)return field.innerHTML;
+      if(field.matches('input[type=checkbox],input[type=radio]'))return field.checked;
+      if(field.matches('select'))return [...field.options].map(option=>option.selected).join(',');
+      return field.value;
+    }
+    function observeAnnotationEditing(e,eventPath){
+      if(eventPath.includes(host))return;
+      const field=eventPath.find(el=>el?.matches?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'));
+      if(!field)return;
+      if(['focusin','beforeinput'].includes(e.type)&&!ann.externalValues.has(field))ann.externalValues.set(field,annotationFieldValue(field));
+      if(['input','change'].includes(e.type)){
+        if(!ann.externalValues.has(field))ann.externalValues.set(field,field.defaultValue??null);
+        if(annotationFieldValue(field)===ann.externalValues.get(field))ann.externalDirty.delete(field);else ann.externalDirty.add(field);
+      }
+    }
+    function annotationReloadBlocked(){
+      for(const field of ann.externalDirty)if(!field.isConnected)ann.externalDirty.delete(field);
+      const focused=document.activeElement,externalFocus=focused&&focused!==host&&focused.matches('input,textarea,select,[contenteditable]:not([contenteditable="false"])');
+      return !ann.viewReady||ann.sending||ann.adding||ann.composing||ann.draft||ann.selection||Object.values(ann.chats).some(text=>String(text).trim())||
+        Object.keys(ann.requests).some(key=>!key.endsWith(':initial'))||ann.externalDirty.size||externalFocus||unsavedReview()||state.selected||state.saving||state.adding||
+        state.codexSending||state.chatSending||Object.values(state.chatDrafts).some(text=>String(text).trim())||codexBusy()||ann.items.some(record=>annotationBusy(record.conversation));
+    }
+    function observeAnnotationBuild(build){
+      if(!ann.loadedBuild)ann.loadedBuild=build;
+      if(!endpoint||shared||!codexEnabled||!ann.agent.enabled)return;
+      for(const record of annotationPageRecords()){
+        if(annotationBusy(record.conversation))continue;
+        const version=String(record.updatedAt||'');
+        if(ann.observedEdits&&record.status==='changed'&&record.conversation?.status==='completed'&&ann.editVersions.get(record.id)!==version&&build&&build!==ann.loadedBuild)ann.refreshPending=build;
+        ann.editVersions.set(record.id,version);
+      }
+      ann.observedEdits=true;
+      if(ann.refreshPending){if(build===ann.loadedBuild)ann.refreshPending=null;else if(build)ann.refreshPending=build;}
+    }
+    function maybeReloadAnnotationPage(explicit=false){
+      if(!ann.refreshPending||ann.reloading)return;
+      if(annotationReloadBlocked()){if(explicit)notice('内容已更新，请先保存或清空当前输入，随后会自动刷新');return;}
+      if(!saveAnnotationView()){if(explicit)notice('无法保存批注位置，请允许浏览器存储后重试刷新');return;}
+      ann.reloading=true;location.reload();
+    }
+    function annotationContainer(range){let el=range.commonAncestorContainer.nodeType===1?range.commonAncestorContainer:range.commonAncestorContainer.parentElement;while(el&&getComputedStyle(el).display==='inline')el=el.parentElement;return el;}
+    function annotationExcluded(node){const el=node?.nodeType===1?node:node?.parentElement;return !el||el.closest('input,textarea,select,button,[contenteditable]:not([contenteditable="false"]),script,style,noscript,[data-review-ignore]')||node.getRootNode()!==document;}
+    function scheduleAnnotationSelection(){clearTimeout(ann.selectionTimer);ann.selectionTimer=setTimeout(readAnnotationSelection,60);}
+    function readAnnotationSelection(){
+      if(state.active){ann.selection=null;drawAnnotations();return;}
+      const selection=getSelection();
+      if(!selection?.rangeCount||selection.isCollapsed){ann.selection=null;drawAnnotations();return;}
+      const range=selection.getRangeAt(0);
+      if(annotationExcluded(range.startContainer)||annotationExcluded(range.endContainer)||!range.toString().trim()){ann.selection=null;drawAnnotations();return;}
+      const el=annotationContainer(range);if(!el||el===host||el.contains(host)||el.querySelector('input,textarea,[contenteditable="true"]')&&range.cloneContents().querySelector?.('input,textarea,[contenteditable="true"]')){ann.selection=null;drawAnnotations();return;}
+      const before=document.createRange();before.selectNodeContents(el);before.setEnd(range.startContainer,range.startOffset);
+      const start=before.toString().length,exact=range.toString(),text=el.textContent||'';
+      if(exact!==text.slice(start,start+exact.length)){ann.selection=null;drawAnnotations();return;}
+      const bounds=rect(range.getBoundingClientRect());if(!bounds.width||!bounds.height)return;
+      const a=anchor(el,bounds,'text',exact);a.textRange={start,end:start+exact.length,exact,prefix:text.slice(Math.max(0,start-40),start),suffix:text.slice(start+exact.length,start+exact.length+40)};
+      ann.selection={anchor:a,page:pageContext(),range:range.cloneRange()};drawAnnotations();
+    }
+    function restoreAnnotationRange(a){
+      const el=query(a?.selector),t=a?.textRange;if(!el||!t||typeof t.exact!=='string'||!t.exact)return null;
+      const text=el.textContent||'',contextFits=i=>(!t.prefix||text.slice(Math.max(0,i-t.prefix.length),i)===t.prefix)&&(!t.suffix||text.slice(i+t.exact.length,i+t.exact.length+t.suffix.length)===t.suffix);
+      let start=t.start;
+      if(text.slice(start,t.end)!==t.exact||!contextFits(start)){
+        const hits=[];let offset=0,index;while((index=text.indexOf(t.exact,offset))!==-1){if(contextFits(index))hits.push(index);offset=index+Math.max(1,t.exact.length);}
+        if(hits.length!==1)return null;start=hits[0];
+      }
+      const walker=document.createTreeWalker(el,NodeFilter.SHOW_TEXT),end=start+t.exact.length;let offset=0,first=null,last=null,node;
+      while((node=walker.nextNode())){const length=node.textContent.length;if(first===null&&offset+length>start)first=[node,start-offset];if(offset+length>=end){last=[node,end-offset];break;}offset+=length;}
+      if(!first||!last)return null;const range=document.createRange();try{range.setStart(...first);range.setEnd(...last);return range.toString()===t.exact?range:null;}catch{return null;}
+    }
+    const annotationOriginalElements=new WeakMap();
+    function annotationLocation(a){
+      const range=restoreAnnotationRange(a),element=query(a?.selector);
+      const result=(kind,el=null,exact=null)=>({kind,element:el,range:exact,getBoundingClientRect:()=>exact?exact.getBoundingClientRect():el?.getBoundingClientRect()||null});
+      if(range)return result('exact',element,range);
+      if(!a||!element||!unique(a.selector)||annotationExcluded(element)||['HTML','BODY'].includes(element.tagName)||element.contains(host))return result('missing');
+      let original=annotationOriginalElements.get(a);
+      if(original===undefined){const template=document.createElement('template');template.innerHTML=a.html||'';original=template.content.firstElementChild||null;annotationOriginalElements.set(a,original);}
+      if(!original||original.tagName!==element.tagName||a.tag&&a.tag!==element.tagName)return result('missing');
+      // Stable identity names the logical block even when all of its text changes.
+      // A positional selector alone cannot identify a replacement at the old index.
+      const stableId=original.id&&original.id===element.id&&unique('#'+CSS.escape(original.id));
+      const stableAttribute=[...original.attributes].some(attr=>/^data-(review-id|testid|node|edge|id|key)$/.test(attr.name)&&attr.value&&element.getAttribute(attr.name)===attr.value&&unique(element.tagName.toLowerCase()+'['+attr.name+'="'+CSS.escape(attr.value)+'"]'));
+      if(stableId||stableAttribute)return result('block',element);
+      if(original.id||/:(?:nth|first|last|only)-(?:child|of-type)|[+~]/.test(a.selector))return result('missing');
+      const text=element.textContent||'',t=a.textRange||{},contexts=[t.prefix||'',t.suffix||''].map(value=>value.trim()?value:'');
+      const distinctive=contexts.filter(value=>value.trim().length>=12);
+      const positions=contexts.map(value=>value?text.indexOf(value):-1);
+      if(!distinctive.length||contexts.some((value,i)=>value&&(positions[i]<0||text.lastIndexOf(value)!==positions[i]))||contexts.every(Boolean)&&positions[0]>=positions[1])return result('missing');
+      return result('block',element);
+    }
+    function annotationDocumentTop(record,location=annotationLocation(record.anchor)){
+      const bounds=location.getBoundingClientRect();
+      return bounds?bounds.top+annotationScrollRoot().scrollTop:Math.max(60,Number(record.anchor?.documentRect?.y??record.anchor?.rect?.y)||60);
+    }
+    function annotationPageRecords(){return ann.items.filter(c=>pageKey(c.page.path)===pageKey(location.href));}
+    function annotationVisibleRecords(){return annotationPageRecords().filter(c=>ann.filter==='all'||(ann.filter==='resolved'?c.status==='resolved':c.status!=='resolved'));}
+    function annotationOrder(records){return records.slice().sort((a,b)=>{const la=annotationLocation(a.anchor),lb=annotationLocation(b.anchor);if(la.range&&lb.range)return la.range.compareBoundaryPoints(Range.START_TO_START,lb.range)||(a.number||0)-(b.number||0);if(la.element&&lb.element){if(la.element===lb.element)return (a.anchor.textRange?.start||0)-(b.anchor.textRange?.start||0)||(a.number||0)-(b.number||0);const order=la.element.compareDocumentPosition(lb.element);if(order&Node.DOCUMENT_POSITION_FOLLOWING)return -1;if(order&Node.DOCUMENT_POSITION_PRECEDING)return 1;}return annotationDocumentTop(a,la)-annotationDocumentTop(b,lb)||(a.number||0)-(b.number||0);});}
+    function annotationScrollRoot(){return query(script.dataset.annotationScrollRoot)||document.scrollingElement;}
+    function annotationScrollBy(delta){const root=annotationScrollRoot();if(root===document.scrollingElement)window.scrollBy(0,delta);else root.scrollTop+=delta;}
+    function readingPosition(){const x=Math.min(120,innerWidth/4),y=Math.min(100,innerHeight/4),el=document.elementFromPoint(x,y);if(!el||el.contains(host))return null;const caret=document.caretRangeFromPoint?.(x,y);if(caret&&caret.startContainer.nodeType===Node.TEXT_NODE){const range=caret.cloneRange();if(range.startOffset<range.startContainer.length)range.setEnd(range.startContainer,range.startOffset+1);return {range,top:range.getBoundingClientRect().top};}return {el,top:el.getBoundingClientRect().top};}
+    function restoreReading(pos){if(pos?.range?.startContainer.isConnected)annotationScrollBy(pos.range.getBoundingClientRect().top-pos.top);else if(pos?.el?.isConnected)annotationScrollBy(pos.el.getBoundingClientRect().top-pos.top);}
+    function syncAnnotationLayout(){
+      if(!ann.open){if(ann.reserve){const pos=readingPosition();if(ann.reserve.styleAttribute===null)ann.reserve.el.removeAttribute('style');else ann.reserve.el.setAttribute('style',ann.reserve.styleAttribute);ann.reserve=null;ann.tail?.remove();ann.tail=null;restoreReading(pos);}return;}
+      const explicit=query(script.dataset.annotationRoot),scroll=annotationScrollRoot(),body=document.body;
+      const fixed=[...body.children].some(el=>el!==host&&el!==ann.tail&&getComputedStyle(el).position==='fixed'&&el.getBoundingClientRect().width>innerWidth*.7);
+      const nested=[...body.querySelectorAll('main,article,[role=main]')].some(el=>/auto|scroll/.test(getComputedStyle(el).overflowY)&&el.scrollHeight>el.clientHeight+20&&el.clientHeight<innerHeight+10);
+      const safe=innerWidth>760&&(explicit||(!fixed&&!nested&&!['grid','inline-grid'].includes(getComputedStyle(body).display)&&scroll===document.scrollingElement&&getComputedStyle(body).overflowX!=='hidden'));
+      const target=safe?(explicit||body):null;
+      if(ann.reserve?.el!==target){const pos=readingPosition();if(ann.reserve){if(ann.reserve.styleAttribute===null)ann.reserve.el.removeAttribute('style');else ann.reserve.el.setAttribute('style',ann.reserve.styleAttribute);ann.reserve=null;ann.tail?.remove();ann.tail=null;}if(target){const names=['padding-right','box-sizing'];ann.reserve={el:target,styleAttribute:target.getAttribute('style'),styles:names.map(name=>[name,target.style.getPropertyValue(name),target.style.getPropertyPriority(name)])};const padding=parseFloat(getComputedStyle(target).paddingRight)||0;target.style.setProperty('padding-right',(padding+320)+'px');target.style.setProperty('box-sizing','border-box');ann.tail=document.createElement('div');ann.tail.dataset.reviewIgnore='true';ann.tail.setAttribute('aria-hidden','true');ann.tail.style.cssText='height:0;flex-shrink:0;pointer-events:none;clear:both';(scroll===document.scrollingElement?body:scroll).append(ann.tail);}restoreReading(pos);}
+      ann.layout=target?'aligned':'drawer';
+      const color=getComputedStyle(body).backgroundColor.match(/[\d.]+/g),rgb=color&&color.length>=3?color.slice(0,3).map(Number):[255,255,255];
+      ann.dark=color&&Number(color[3]??1)>0&&rgb.reduce((a,b)=>a+b,0)<390;
+      $('annotation-panel').dataset.theme=ann.dark?'dark':'light';
+    }
+    function drawAnnotations(){
+      const floating=$('annotation-selection');
+      if(ann.selection&&!state.active){const r=ann.selection.range.getBoundingClientRect();if(!floating.firstChild)floating.innerHTML='<button class="annotation-create-button" data-action="annotation-create" aria-label="为选中文字添加内容批注" title="添加批注">'+annotationIcons.comment+'</button>';const color=getComputedStyle(document.body).backgroundColor.match(/[\d.]+/g);floating.dataset.theme=color&&Number(color[3]??1)>0&&color.slice(0,3).map(Number).reduce((a,b)=>a+b,0)<390?'dark':'light';const box=floating.firstChild.getBoundingClientRect();floating.style.left=Math.max(8,Math.min(innerWidth-box.width-8,r.right-box.width))+'px';floating.style.top=Math.max(8,r.bottom+box.height+16<innerHeight?r.bottom+8:r.top-box.height-8)+'px';}else floating.innerHTML='';
+      const records=state.active?[]:annotationVisibleRecords();
+      if(!state.active&&ann.open&&ann.draft&&pageKey(ann.draft.page.path)===pageKey(location.href)&&!records.some(c=>c.id===ann.draft.id))records.push({...ann.draft,number:'…'});
+      const markup=records.map(c=>{const location=annotationLocation(c.anchor),range=location.range,r=location.getBoundingClientRect();if(!r)return '';const highlight=range?[...range.getClientRects()].filter(r=>r.width&&r.height&&r.bottom>0&&r.top<innerHeight).map(r=>`<span class="annotation-highlight ${c.id===ann.current?'selected':''}" data-id="${esc(c.id)}" style="left:${r.x}px;top:${r.y}px;width:${r.width}px;height:${r.height}px"></span>`).join(''):'';const block=location.kind==='block';return highlight+(c.number!=='…'&&r.width&&r.height&&r.bottom>0&&r.top<innerHeight?`<button class="annotation-marker${block?' annotation-marker-block':''}" data-action="annotation-open" data-id="${esc(c.id)}" aria-label="查看内容批注 ${c.number}${block?'，原文已变化，定位到原段落':''}" ${block?'title="原文已变化 · 保留在原段落旁"':''} style="left:${Math.max(2,Math.min(innerWidth-24,r.right+3))}px;top:${Math.max(2,r.top-8)}px">${c.number}</button>`:'');}).join('');
+      if($('annotation-highlights').innerHTML!==markup)$('annotation-highlights').innerHTML=markup;
+      layoutAnnotationCards();
+    }
+    function locateAnnotation(record){const location=annotationLocation(record?.anchor),r=location.getBoundingClientRect();if(location.kind!=='exact')notice('原文位置已变化，请查看保留的引用和截图');if(!r){const card=[...($('annotation-cards')?.children||[])].find(el=>el.dataset.id===record?.id);if(card&&ann.layout==='aligned'){const top=card.getBoundingClientRect().top;if(top<64||top>innerHeight-100)annotationScrollBy(top-90);}drawAnnotations();return;}if(r.top<64||r.bottom>innerHeight-80)annotationScrollBy(r.top-Math.max(80,innerHeight*.28));drawAnnotations();}
+    function openAnnotations(id=null){ann.open=true;ann.current=id||(!ann.current&&ann.draft?ann.draft.id:ann.current);if(id)ann.lastAnchor=id;ann.error='';state.list=false;state.codexPanel=false;renderList();renderCodex();syncAnnotationLayout();renderAnnotations();toolbar();drawAnnotations();if(id&&ann.layout==='drawer')requestAnimationFrame(()=>ui.querySelector('.annotation-card[data-active=true]')?.scrollIntoView({block:'nearest'}));}
+    function annotationImages(images,editable=false,id=''){return images?.length?`<div class="attachments">${images.map((image,i)=>`<div class="attachment"><button class="attachment-preview" data-action="annotation-preview" data-id="${esc(id)}" data-index="${i}" aria-label="预览批注附图 ${i+1}"><img src="${esc(imageSource(image))}" alt="批注附图 ${i+1}"></button>${editable?`<button class="attachment-remove" data-action="annotation-remove-image" data-index="${i}" aria-label="移除批注附图 ${i+1}">×</button>`:''}</div>`).join('')}</div>`:'';}
+    function setAnnotationMarkup(id,markup){const el=$(id);if(el&&el.innerHTML!==markup)el.innerHTML=markup;}
+    function annotationDate(value){const numeric=typeof value==='number'||/^\d+(?:\.\d+)?$/.test(String(value))?Number(value):NaN,date=Number.isFinite(numeric)?new Date(numeric>=1e17?numeric/1e6:numeric>=1e14?numeric/1e3:numeric>=1e11?numeric:numeric*1000):new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleDateString();}
+    function annotationMessages(record){
+      const c=record.conversation||{},visible=[];
+      for(const [i,message] of (c.messages||[]).entries()){
+        if(!message.text||message.role==='user'&&(c.initialMessageId?message.id===c.initialMessageId:c.hasAgent!==false&&c.status!=='saved'&&i===0&&message.text===record.text))continue;
+        if(message.role==='assistant'){
+          // A turn may stream commentary and a final item. Display its latest item once;
+          // preserve the complete raw conversation in the saved/exported JSON evidence.
+          const sameTurn=message.turnId?visible.findIndex(m=>m.role==='assistant'&&m.turnId===message.turnId):-1;
+          if(sameTurn>=0){visible[sameTurn]=message;continue;}
+          const previous=visible[visible.length-1];
+          if(!message.turnId&&previous?.role==='assistant'&&!previous.turnId){visible[visible.length-1]=message;continue;}
+        }
+        visible.push(message);
+      }
+      if(c.result&&!visible.some(m=>m.role==='assistant'&&m.text===c.result)){
+        const latest=visible.map(m=>m.role).lastIndexOf('assistant');
+        if(latest<0)visible.push({id:'result',role:'assistant',text:c.result});
+        else if(c.status==='completed')visible[latest]={...visible[latest],text:c.result};
+      }
+      return visible;
+    }
+    function annotationReplyPreference(id){return ann.requests[id+':annotation-message']?.autoReply??(ann.draft?.id===id?(ann.draft.pending?.autoReply??ann.draft.autoReply!==false):ann.replyAgent[id]!==false);}
+    function annotationComposer(record,draft){const id=record.id,pending=draft?!!record.pending:!!ann.requests[id+':annotation-message'];return `<div class="annotation-compose"><label class="sr-only" for="${draft?'annotation-input':'annotation-followup'}">${draft?'内容批注':'继续讨论这条批注'}</label><textarea id="${draft?'annotation-input':'annotation-followup'}" rows="2" maxlength="${draft?10000:4000}" placeholder="${draft?'询问这段内容，或说明希望如何修改…':'回复，或补充修改要求…'}" ${pending?'disabled':''}></textarea>${draft?'<div id="annotation-images"></div>':''}<div class="annotation-compose-actions">${draft?'<button data-action="annotation-add-image" title="添加图片" aria-label="添加图片">＋ 图片</button><input id="annotation-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>':'<span></span>'}<button class="primary annotation-send-button" data-action="${draft?'annotation-send':'annotation-message'}" data-id="${esc(id)}" title="⌘ / Ctrl + Enter">发送 ↑</button></div><div class="annotation-agent-line"><button id="annotation-agent-toggle" role="switch" data-action="annotation-agent-toggle" data-id="${esc(id)}" aria-checked="false">Agent响应 <span aria-hidden="true"></span></button><small id="annotation-capability"></small></div></div>`;}
+    function reconcileAnnotationCardOrder(root,records){
+      const byId=new Map([...root.children].map(card=>[card.dataset.id,card]));
+      const ordered=annotationOrder(records).map(record=>byId.get(record.id)).filter(Boolean);
+      // Never detach the active composer: moving its siblings around it preserves
+      // native focus, selection and IME even on browsers without moveBefore().
+      const protectedCard=ordered.find(card=>card.contains(ui.activeElement))||byId.get(ann.current);
+      const pivot=ordered.indexOf(protectedCard),place=(nodes,before)=>{
+        for(let i=nodes.length-1;i>=0;i--){const card=nodes[i];if(card.nextSibling!==before)root.insertBefore(card,before);before=card;}
+      };
+      if(pivot>=0){place(ordered.slice(0,pivot),protectedCard);place(ordered.slice(pivot+1),null);}
+      else place(ordered,null);
+    }
+    function renderAnnotationMeta(card,record,isDraft){
+      const meta=card.querySelector('[data-part="meta"]'),kind=isDraft?'draft':'record';
+      // Native details.open and focus belong to the reader, not the polling renderer.
+      if(meta.dataset.kind!==kind){
+        meta.dataset.kind=kind;
+        meta.innerHTML='<small data-meta="author"></small><small data-meta="changed" class="annotation-changed" hidden>待验收</small>'+(isDraft?'<button class="annotation-draft-close" data-action="annotation-discard" aria-label="放弃草稿" title="放弃草稿">×</button>':'<details class="annotation-menu"><summary aria-label="批注选项">···</summary><div><button data-action="annotation-status"></button><button data-action="annotation-snapshot">查看截图</button></div></details>');
+      }
+      const author=meta.querySelector('[data-meta="author"]'),date=annotationDate(record.createdAt),label=isDraft?'':date;
+      if(author.textContent!==label)author.textContent=label;
+      author.hidden=!label;
+      meta.querySelector('[data-meta="changed"]').hidden=record.status!=='changed';
+      if(!isDraft){
+        const status=meta.querySelector('[data-action="annotation-status"]'),snapshot=meta.querySelector('[data-action="annotation-snapshot"]');
+        status.dataset.id=snapshot.dataset.id=record.id;status.dataset.status=record.status==='resolved'?'open':'resolved';
+        const text=record.status==='resolved'?'重新打开':'标为解决';if(status.textContent!==text)status.textContent=text;
+        snapshot.disabled=!(record.screenshot||record.screenshotData);
+      }
+    }
+    function closeAnnotationMenus(except=null,restoreFocus=false){
+      const menus=[...ui.querySelectorAll('.annotation-menu[open]')].filter(menu=>menu!==except);
+      for(const menu of menus)menu.open=false;
+      if(restoreFocus)menus[menus.length-1]?.querySelector('summary')?.focus();
+      return menus.length>0;
+    }
+    function renderAnnotations(){
+      const panel=$('annotation-panel');if(!ann.open){syncAnnotationLayout();panel.innerHTML='';saveAnnotationView();return;}syncAnnotationLayout();
+      if(!panel.firstElementChild){panel.innerHTML='<section class="annotation-sidebar" aria-label="页面内容批注"><header><strong id="annotation-title"></strong><nav aria-label="批注导航"><button data-action="annotation-prev" aria-label="上一条批注">↑</button><button data-action="annotation-next" aria-label="下一条批注">↓</button><details class="annotation-menu"><summary aria-label="更多批注选项">···</summary><div><button data-action="annotation-filter" data-filter="open">未解决</button><button data-action="annotation-filter" data-filter="all">全部</button><button data-action="annotation-filter" data-filter="resolved">已解决</button><button data-action="annotation-export">导出批注</button><button data-action="annotation-refresh">重新同步</button></div></details><button data-action="annotation-reload" aria-label="刷新页面内容" title="内容已更新；保留当前输入，保存后自动刷新" hidden>更新</button><button data-action="annotation-close" aria-label="收起内容批注">×</button></nav></header><div class="annotation-drawer-back"><button data-action="annotation-return">← 返回原文</button><span id="annotation-drawer-quote"></span></div><div id="annotation-empty"></div><div id="annotation-cards"></div><div id="annotation-error" class="error" role="alert"></div></section>';}
+      panel.firstElementChild.dataset.layout=ann.layout;
+      ui.querySelector('[data-action=annotation-reload]').hidden=!ann.refreshPending;
+      const records=annotationOrder(annotationVisibleRecords()),draft=ann.draft&&pageKey(ann.draft.page.path)===pageKey(location.href)&&!records.some(c=>c.id===ann.draft.id)?ann.draft:null;
+      if(draft)records.push(draft);
+      const total=annotationPageRecords().length;$('annotation-title').textContent='批注 · '+annotationVisibleRecords().length+' · '+({all:'全部',resolved:'已解决',open:'未解决'}[ann.filter])+(ann.filter==='all'?'':' / '+total);
+      $('annotation-error').textContent=ann.error;
+      const cards=$('annotation-cards'),ids=new Set(records.map(c=>c.id));for(const card of [...cards.children])if(!ids.has(card.dataset.id)){annotationCardResize.unobserve(card);card.remove();}
+      // IDs identify only the active card. Keyed card nodes survive polling and input composition.
+      for(const card of cards.children)for(const el of card.querySelectorAll('[id]'))if(!['annotation-input','annotation-followup','annotation-agent-toggle','annotation-capability','annotation-images','annotation-image-input'].includes(el.id))el.removeAttribute('id');
+      for(const record of records){let card=[...cards.children].find(el=>el.dataset.id===record.id);if(!card){card=document.createElement('article');card.className='annotation-card';card.dataset.id=record.id;card.tabIndex=0;card.innerHTML='<button class="annotation-quote" data-part="quote" data-action="annotation-open"></button><div class="annotation-card-meta" data-part="meta"></div><div data-part="original"></div><div data-part="thread" class="annotation-thread" role="log" aria-label="批注对话"></div><div class="annotation-activity"><div data-part="state" class="annotation-state" role="status" aria-live="polite"></div><div data-part="controls" class="annotation-controls"></div></div><div data-part="composer"></div>';cards.append(card);annotationCardResize.observe(card);}const part=name=>card.querySelector('[data-part="'+name+'"]'),set=(name,markup)=>{if(part(name).innerHTML!==markup)part(name).innerHTML=markup;},active=ann.current===record.id,isDraft=record===draft;
+        card.classList.toggle('active',active);card.dataset.draft=String(isDraft);card.setAttribute('aria-label',isDraft?'新批注':'批注 '+record.number);
+        const quote=part('quote');quote.dataset.id=record.id;quote.textContent=record.anchor.selectedText||record.anchor.textRange?.exact||'';quote.title=quote.textContent;
+        renderAnnotationMeta(card,record,isDraft);
+        set('original',isDraft?'':`<p class="annotation-text">${esc(record.text)}</p>${annotationImages(record.attachments,false,record.id)}`);
+        set('thread',isDraft?'':annotationMessages(record).map((m,i)=>{const key=m.id||String(i),long=m.text.length>500,expanded=ann.expanded[record.id+':'+key];return `<div class="annotation-message ${m.role==='user'?'from-user':'from-agent'}" role="group" aria-label="${m.role==='user'?'你的回复':'Agent 回复'}">${m.role==='user'?'':'<small>Agent</small>'}<p class="${long&&!expanded?'annotation-collapsed':''}">${esc(m.text)}</p>${long?`<button data-action="annotation-expand" data-id="${esc(record.id)}" data-message="${esc(key)}">${expanded?'收起回复':'展开回复'}</button>`:''}</div>`;}).join(''));
+        const c=record.conversation||{},busy=annotationBusy(c),unlocated=annotationLocation(record.anchor).kind!=='exact',progress=busy?esc({queued:'等待 Agent',starting:'Agent 回复中…',running:'Agent 回复中…',stopping:'正在停止'}[c.status]):c.status==='failed'?esc(c.error||'Agent 回复失败'):c.status==='cancelled'?'已停止':'';card.dataset.busy=String(busy);set('state',(progress?'<span>'+progress+'</span>':'')+(unlocated?'<span>原文已变化 · 引用与截图仍保留</span>':''));
+        set('controls',isDraft?'':`${ann.draft?.id===record.id&&ann.draft.pending?'<button data-action="annotation-confirm">重试确认发送</button>':!c.hasAgent&&!annotationBusy(c)&&annotationCanSend()?`<button data-action="annotation-start" data-id="${esc(record.id)}">让 Agent 处理</button>`:''}${busy?`<button class="annotation-stop-button" data-action="annotation-stop" data-id="${esc(record.id)}" aria-label="${c.status==='stopping'?'正在停止回复':c.status==='queued'?'取消排队':'停止回复'}" title="${c.status==='stopping'?'正在停止回复':c.status==='queued'?'取消排队':'停止回复'}"${c.status==='stopping'||!annotationCanSend()?' disabled=""':''}>${annotationIcons.stop}</button>`:['failed','cancelled'].includes(c.status)?`<button data-action="annotation-retry" data-id="${esc(record.id)}" ${annotationCanSend()?'':'disabled'}>重试</button>`:''}`);
+        const compose=part('composer');if(active&&(!compose.firstChild||compose.dataset.kind!==(isDraft?'draft':'reply'))){compose.dataset.kind=isDraft?'draft':'reply';for(const other of cards.querySelectorAll('[data-part=composer]'))if(other!==compose)other.replaceChildren();compose.innerHTML=annotationComposer(record,isDraft);const input=$(isDraft?'annotation-input':'annotation-followup');input.value=isDraft?record.text||'':ann.chats[record.id]||'';}else if(!active&&compose.firstChild)compose.replaceChildren();
+        if(active){quote.id='annotation-quote';part('original').id='annotation-original';part('thread').id='annotation-thread';part('state').id='annotation-state';part('controls').id='annotation-controls';card.dataset.active='true';}else delete card.dataset.active;
+      }
+      reconcileAnnotationCardOrder(cards,records);
+      const active=currentAnnotation()||(draft?.id===ann.current?draft:null);$('annotation-drawer-quote').textContent=active?.anchor?.selectedText||'';if(active){const isDraft=active===draft,pending=isDraft?!!draft.pending:!!ann.requests[active.id+':annotation-message'],toggle=$('annotation-agent-toggle');if(toggle){toggle.setAttribute('aria-checked',String(annotationCanSend()&&annotationReplyPreference(active.id)));toggle.disabled=!annotationCanSend()||pending||ann.sending;toggle.title=pending?'待确认消息沿用原发送选择':annotationCanSend()?'本次发送交给 Agent 响应':annotationReason();$('annotation-capability').textContent=pending?'发送待确认':annotationCanSend()?'':annotationReason();}const field=$(isDraft?'annotation-input':'annotation-followup');if(field)field.disabled=ann.sending||pending;setAnnotationMarkup('annotation-images',isDraft?annotationImages(draft.attachments,true):'');}
+      const ordered=annotationOrder(annotationVisibleRecords()),index=ordered.findIndex(c=>c.id===ann.current);ui.querySelector('[data-action=annotation-prev]').disabled=!ordered.length||index===0;ui.querySelector('[data-action=annotation-next]').disabled=!ordered.length||index===ordered.length-1;
+      updateAnnotationSend();layoutAnnotationCards();requestAnimationFrame(layoutAnnotationCards);saveAnnotationView();
+    }
+    function layoutAnnotationCards(){
+      if(!ann.open||!$('annotation-cards'))return;const root=$('annotation-cards'),records=annotationOrder(annotationVisibleRecords());if(ann.draft&&pageKey(ann.draft.page.path)===pageKey(location.href)&&!records.some(c=>c.id===ann.draft.id))records.push(ann.draft);
+      const entries=records.map(record=>{const card=[...root.children].find(el=>el.dataset.id===record.id),location=annotationLocation(record.anchor),bounds=location.getBoundingClientRect();return {record,card,location,bounds};}).filter(e=>e.card);
+      if(ann.layout==='drawer'){entries.forEach(e=>{e.card.style.removeProperty('top');});root.style.removeProperty('height');$('annotation-empty').innerHTML=entries.length?'':'<p>阅读时选中文字，即可添加批注。</p>';return;}
+      const scroll=annotationScrollRoot().scrollTop;for(const e of entries){e.target=annotationDocumentTop(e.record,e.location);e.top=e.target;}
+      const active=entries.findIndex(e=>e.record.id===ann.current);if(active>=0){for(let i=active-1;i>=0;i--)entries[i].top=Math.min(entries[i].target,entries[i+1].top-entries[i].card.offsetHeight-16);for(let i=active+1;i<entries.length;i++)entries[i].top=Math.max(entries[i].target,entries[i-1].top+entries[i-1].card.offsetHeight+16);}else for(let i=1;i<entries.length;i++)entries[i].top=Math.max(entries[i].target,entries[i-1].top+entries[i-1].card.offsetHeight+16);
+      for(const e of entries)e.card.style.top=(e.top-scroll)+'px';
+      const visible=entries.some(e=>e.bounds?e.bounds.top<innerHeight-60&&e.bounds.bottom>60:e.top-scroll<innerHeight-60&&e.top-scroll+e.card.offsetHeight>60);const empty=entries.length&&!visible?'<button data-action="annotation-nearest">跳到最近批注</button>':!entries.length?'<p>阅读时选中文字，即可添加批注。</p>':'';if($('annotation-empty').innerHTML!==empty)$('annotation-empty').innerHTML=empty;
+      if(ann.tail){const extent=Math.max(0,...entries.map(e=>e.top+e.card.offsetHeight+90)),base=ann.tail.getBoundingClientRect().top+scroll;const extra=Math.max(0,Math.ceil(extent-base));if(Math.abs(ann.tail.offsetHeight-extra)>2)ann.tail.style.height=extra+'px';}
+    }
+    function annotationSendLabel(button,label){const markup='<span>'+esc(label)+'</span>'+annotationIcons.send;if(button.innerHTML!==markup)button.innerHTML=markup;button.setAttribute('aria-label',label==='发送'?'发送批注':label);button.title=label==='发送'?'发送 · ⌘ / Ctrl + Enter':label;}
+    function updateAnnotationSend(){const draft=ann.draft,button=ui.querySelector('[data-action="annotation-send"]');if(button){button.disabled=ann.sending||ann.adding||!draft||(!draft.text?.trim()&&!draft.attachments?.length);annotationSendLabel(button,ann.sending?'正在发送…':ann.adding?'正在读取图片…':draft?.pending?'重试确认发送':'发送');}const reply=ui.querySelector('[data-action="annotation-message"]');if(reply){const pending=ann.requests[ann.current+':annotation-message'];reply.disabled=ann.sending||(!pending&&!$('annotation-followup')?.value.trim());annotationSendLabel(reply,pending?'重试确认发送':ann.sending?'正在发送…':'发送');}ui.querySelectorAll('[data-action="annotation-add-image"],[data-action="annotation-remove-image"],[data-action="annotation-discard"]').forEach(el=>el.disabled=ann.sending||ann.adding||!!draft?.pending);}
+    async function refreshAnnotations(){
+      syncAnnotationIdentity();
+      try{if(endpoint){const response=await fetch(endpoint+'annotations');if(!response.ok)throw Error('内容批注服务暂不可用');const data=await response.json();ann.items=data.annotations||[];ann.agent=data.agent||{enabled:false,available:false};observeAnnotationBuild(data.build);}else ann.items=readStorage(localStorage,'annotations','[]');toolbar();renderAnnotations();drawAnnotations();await restoreAnnotationView();maybeReloadAnnotationPage();}catch(error){ann.agent={enabled:false,available:false,reason:error.message};if(ann.open){ann.error=error.message;renderAnnotations();}}
+    }
+    async function annotationPost(route,payload){const response=await fetch(endpoint+'annotations'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw Error(data.error||'批注操作失败，请重试');return data;}
+    function mergeAnnotation(record){const index=ann.items.findIndex(c=>c.id===record.id);if(index<0)ann.items.push(record);else ann.items[index]=record;}
+    async function sendAnnotation(){
+      const draft=ann.draft;if(!draft||ann.sending||ann.adding||(!draft.text?.trim()&&!draft.attachments.length))return;ann.sending=true;ann.error='';renderAnnotations();
+      try{
+        if(!draft.pending){
+          const data=fileMode?null:(draft.screenshotData||await ann.shot||await capture());if(!fileMode&&!data)throw Error('截图未生成，请重试发送');
+          const record={id:draft.id,text:draft.text.trim(),status:'open',anchor:draft.anchor,page:draft.page,attachments:draft.attachments.map(image=>({...image})),...(data?{screenshotData:draft.screenshotData||await markSnapshot(data,draft.anchor.rect)}:{snapshotNote:'离线文件批注，未附截图'})};
+          draft.pending={annotation:record,requestId:draft.requestId,autoReply:annotationCanSend()&&draft.autoReply!==false};if(!storeAnnotationDraft())throw Error(ann.error);
+        }
+        let record,dispatchError='';
+        if(endpoint){const data=await annotationPost('',draft.pending);record=data.annotation;if(data.agentError){dispatchError=String(data.agentError);ann.error='批注已保存，Agent 派发待确认；'+dispatchError;}}
+        else{record={...draft.pending.annotation,number:Math.max(0,...ann.items.map(c=>c.number||0))+1,createdAt:Date.now(),updatedAt:Date.now()};const records=ann.items.filter(c=>c.id!==record.id).concat(record);if(!annotationStorage('annotations',records))throw Error(ann.error);}
+        ann.requests[record.id+':initial']={requestId:draft.requestId};annotationStorage('annotationRequests',ann.requests);mergeAnnotation(record);if(!dispatchError){ann.draft=null;ann.shot=null;storeAnnotationDraft();}ann.current=record.id;getSelection()?.removeAllRanges();notice('内容批注已保存');
+      }catch(error){ann.error=error.message||'未收到发送确认，批注与请求已保留，请重试';}
+      finally{ann.sending=false;renderAnnotations();toolbar();drawAnnotations();}
+    }
+    async function addAnnotationImages(files){
+      const draft=ann.draft;if(!draft||draft.pending||ann.adding||ann.sending)return;
+      try{if(draft.attachments.length+files.length>maxImages)throw Error('每条批注最多添加 6 张图片');if(files.some(f=>!imageTypes.includes(f.type)))throw Error('支持 PNG、JPEG、WebP 和 GIF 图片');if(files.some(f=>f.size>maxImageBytes))throw Error('每张图片不能超过 5 MB');if(files.reduce((n,f)=>n+f.size,0)+draft.attachments.reduce((n,f)=>n+f.size,0)>maxTotalImageBytes)throw Error('图片合计不能超过 10 MB');ann.adding=true;updateAnnotationSend();const images=await Promise.all(files.map(async file=>{const dataUrl=await fileData(file),image=new Image();image.src=dataUrl;await image.decode();return {id:requestId(),name:(file.name||'粘贴图片').slice(0,120),mimeType:file.type,size:file.size,dataUrl};}));draft.attachments.push(...images);storeAnnotationDraft();}catch(error){ann.error=error.message||'图片读取失败';}finally{ann.adding=false;renderAnnotations();}}
+    function annotationDownload(data,type,name){const url=URL.createObjectURL(new Blob([data],{type})),link=document.createElement('a');link.href=url;link.download=name;link.dataset.reviewExport='true';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+    async function embeddedAnnotations(){return Promise.all(ann.items.map(async c=>{const embed=async url=>{const response=await fetch(url);if(!response.ok)throw Error('批注图片导出失败');return fileData(await response.blob());};return {...c,attachments:await Promise.all((c.attachments||[]).map(async image=>({...image,dataUrl:image.dataUrl||await embed(image.url)}))),...(c.screenshot&&!c.screenshotData?{screenshotData:await embed(c.screenshot)}:{})};}));}
+    async function annotationAction(name,button){
+      if(name==='annotation-reload'){maybeReloadAnnotationPage(true);return;}
+      if(name==='annotations'){if(ann.open){ann.open=false;renderAnnotations();toolbar();}else openAnnotations();return;}
+      if(name==='annotation-close'){if(ann.draft&&!ann.draft.pending&&!ann.draft.text?.trim()&&!ann.draft.attachments?.length){ann.draft=null;ann.shot=null;storeAnnotationDraft();}ann.open=false;ann.selection=null;renderAnnotations();drawAnnotations();toolbar();ui.querySelector('[data-action=annotations]')?.focus();return;}
+      if(name==='annotation-create'){
+        if(!ann.selection||state.active)return;if(ann.draft){openAnnotations(ann.draft.id);$('annotation-input')?.focus();notice('已恢复未发送的批注；发送后可为新选区添加批注');return;}
+        const selected=ann.selection;ann.draft={id:'annotation-'+requestId(),requestId:requestId(),anchor:selected.anchor,page:selected.page,text:'',attachments:[],autoReply:true};
+        const draft=ann.draft;ann.shot=(fileMode?Promise.resolve(null):capture()).then(async data=>{if(ann.draft===draft&&data){draft.screenshotData=await markSnapshot(data,draft.anchor.rect);storeAnnotationDraft();}return data;}).catch(error=>{if(ann.draft===draft){ann.error=error.message;renderAnnotations();}return null;});
+        ann.selection=null;getSelection()?.removeAllRanges();storeAnnotationDraft();openAnnotations(ann.draft.id);drawAnnotations();$('annotation-input')?.focus();return;
+      }
+      if(name==='annotation-discard'){if(ann.sending||ann.draft?.pending)return;ann.draft=null;ann.shot=null;storeAnnotationDraft();ann.current=null;ann.draftView=false;ann.error='';renderAnnotations();return;}
+      if(name==='annotation-list'){ann.current=null;ann.draftView=false;renderAnnotations();return;}
+      if(name==='annotation-draft'){ann.current=ann.draft?.id;ann.draftView=true;renderAnnotations();$('annotation-input')?.focus();return;}
+      if(name==='annotation-open'){openAnnotations(button.dataset.id);const target=ann.items.find(c=>c.id===button.dataset.id)||ann.draft;if(target)locateAnnotation(target);return;}
+      if(name==='annotation-filter'){ann.filter=button.dataset.filter;ann.current=null;renderAnnotations();drawAnnotations();return;}
+      if(name==='annotation-agent-toggle'){const id=ann.current;if(!annotationCanSend()||ann.sending||ann.requests[id+':annotation-message']||ann.draft?.id===id&&ann.draft.pending)return;const value=!annotationReplyPreference(id);if(ann.draft?.id===id){ann.draft.autoReply=value;storeAnnotationDraft();}else{ann.replyAgent[id]=value;annotationStorage('annotationReplyAgent',ann.replyAgent);}renderAnnotations();return;}
+      if(name==='annotation-expand'){const key=button.dataset.id+':'+button.dataset.message;ann.expanded[key]=!ann.expanded[key];renderAnnotations();return;}
+      if(name==='annotation-prev'||name==='annotation-next'||name==='annotation-nearest'){const records=annotationOrder(annotationVisibleRecords());if(!records.length)return;let i=records.findIndex(c=>c.id===ann.current);if(name==='annotation-nearest'){const distance=record=>{const location=annotationLocation(record.anchor),bounds=location.getBoundingClientRect()||ui.querySelector('.annotation-card[data-id=\"'+CSS.escape(record.id)+'\"]')?.getBoundingClientRect();return bounds?Math.abs(bounds.top-100):Infinity;};i=records.reduce((best,c,index)=>distance(c)<distance(records[best])?index:best,0);}else i=Math.max(0,Math.min(records.length-1,i+(name==='annotation-prev'?-1:1)));openAnnotations(records[i].id);locateAnnotation(records[i]);if(ann.layout==='drawer')ui.querySelector('.annotation-card[data-active=true]')?.scrollIntoView({block:'nearest'});return;}
+      if(name==='annotation-return'){const record=currentAnnotation()||ann.draft;await annotationAction('annotation-close');if(record)locateAnnotation(record);return;}
+      if(name==='annotation-refresh'){await refreshAnnotations();return;}
+      if(name==='annotation-send'||name==='annotation-confirm'){await sendAnnotation();return;}
+      if(name==='annotation-add-image'){$('annotation-image-input')?.click();return;}
+      if(name==='annotation-remove-image'){if(!ann.draft?.pending){ann.draft.attachments.splice(Number(button.dataset.index),1);storeAnnotationDraft();renderAnnotations();}return;}
+      if(name==='annotation-export'){const records=await embeddedAnnotations();annotationDownload('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>页面内容批注 · 离线副本</title><style>body{font:15px/1.7 system-ui;max-width:900px;margin:32px auto;padding:0 20px;color:#202535}article{border-bottom:1px solid #ddd;padding:20px 0}blockquote{border-left:3px solid #98a4bd;margin:12px 0;padding:8px 16px;background:#f5f6f9}p{white-space:pre-wrap;overflow-wrap:anywhere}img{max-width:100%;max-height:480px}small{color:#606879}</style><h1>页面内容批注</h1><p>离线副本，仅含导出时已保存的内容与回复。</p>'+records.map(c=>'<article><h2>#'+c.number+' · '+esc(c.page.title)+'</h2><small>'+esc(c.status)+' · '+esc(c.page.path)+'</small><blockquote>'+esc(c.anchor.selectedText)+'</blockquote><p>'+esc(c.text)+'</p>'+(c.attachments||[]).map(image=>'<img alt="批注附图" src="'+esc(image.dataUrl)+'">').join('')+(c.screenshotData?'<details><summary>原始截图</summary><img alt="原始截图" src="'+esc(c.screenshotData)+'"></details>':'')+'<small>Agent：'+esc(c.conversation?.status||'无回复')+'</small>'+annotationMessages(c).map(m=>'<p><b>'+(m.role==='user'?'你':'Agent')+'</b><br>'+esc(m.text)+'</p>').join('')+'</article>').join('')+'<script type="application/json" id="annotation-export-data">'+JSON.stringify({format:'prototype-review',version:2,annotations:records}).replace(/</g,'\\u003c')+'</script></html>','text/html','页面内容批注-'+new Date().toISOString().slice(0,10)+'.html');return;}
+      const record=button?.dataset.id?ann.items.find(c=>c.id===button.dataset.id):currentAnnotation();
+      if(name==='annotation-preview'&&!record&&ann.draft){const image=ann.draft.attachments[Number(button.dataset.index)];if(image){const opened=window.open('','_blank');if(opened){const img=opened.document.createElement('img');img.src=imageSource(image);img.style.maxWidth='100%';opened.document.body.append(img);}}return;}
+      if(!record)return;
+      if(name==='annotation-locate'){if(pageKey(record.page.path)!==pageKey(location.href)){notice('原文位于 '+record.page.path);return;}locateAnnotation(record);return;}
+      if(name==='annotation-preview'||name==='annotation-snapshot'){const image=name==='annotation-snapshot'?record.screenshotData||record.screenshot:imageSource((record.attachments||[])[Number(button.dataset.index)]||{});if(image){const opened=window.open('','_blank');if(opened){opened.document.title='内容批注证据';const img=opened.document.createElement('img');img.src=image;img.style.maxWidth='100%';opened.document.body.append(img);}}return;}
+      if(name==='annotation-status'){
+        const desiredStatus=button.dataset.status;
+        if(endpoint){const response=await fetch(endpoint+'annotations');if(!response.ok)throw Error('读取最新批注失败');const fresh=(await response.json()).annotations.find(c=>c.id===record.id);if(!fresh)throw Error('批注已不存在');const data=await annotationPost('',{annotation:{...fresh,status:desiredStatus},expectedUpdate:fresh.updatedAt});mergeAnnotation(data.annotation);}
+        else{const updated={...record,status:desiredStatus,updatedAt:Date.now()};if(!annotationStorage('annotations',ann.items.map(c=>c.id===record.id?updated:c)))throw Error(ann.error);mergeAnnotation(updated);}renderAnnotations();toolbar();drawAnnotations();return;
+      }
+      if(ann.sending||(name!=='annotation-message'&&!annotationCanSend()))return;
+      if(name==='annotation-start'){
+        const key=record.id+':start';ann.sending=true;ann.error='';renderAnnotations();
+        try{
+          let payload=ann.requests[key];
+          if(!payload){
+            const response=await fetch(endpoint+'annotations');if(!response.ok)throw Error('读取最新批注失败');
+            const fresh=(await response.json()).annotations.find(c=>c.id===record.id);if(!fresh)throw Error('批注已不存在');
+            const token=ann.requests[record.id+':initial']?.requestId||requestId();
+            payload={annotation:fresh,expectedUpdate:fresh.updatedAt,autoReply:true,requestId:token};
+            ann.requests[key]=payload;ann.requests[record.id+':initial']={requestId:token};
+            if(!annotationStorage('annotationRequests',ann.requests))throw Error(ann.error);
+          }
+          const data=await annotationPost('',payload);mergeAnnotation(data.annotation);
+          if(data.agentError)ann.error='批注已保存，Agent 派发待确认；'+String(data.agentError);
+          else{delete ann.requests[key];annotationStorage('annotationRequests',ann.requests);}
+        }catch(error){ann.error=error.message||'未收到启动确认，请重试同一条请求';}
+        finally{ann.sending=false;renderAnnotations();toolbar();}
+        return;
+      }
+      const requestKey=record.id+':'+name;
+      if(name==='annotation-message'||name==='annotation-retry'||name==='annotation-stop'){
+        const text=ann.chats[record.id]?.trim()||'';if(name==='annotation-message'&&!text&&!ann.requests[requestKey])return;
+        const saved=ann.requests[requestKey];let payload;
+        if(name==='annotation-message')payload=saved||{annotationId:record.id,messageId:requestId(),text,autoReply:annotationCanSend()&&annotationReplyPreference(record.id)};else if(name==='annotation-retry')payload=saved||{annotationId:record.id,requestId:requestId()};else payload={annotationId:record.id};
+        if(name!=='annotation-stop'){ann.requests[requestKey]=payload;annotationStorage('annotationRequests',ann.requests);}
+        ann.sending=true;ann.error='';renderAnnotations();
+        try{let conversation;if(endpoint){const data=await annotationPost('/'+({ 'annotation-message':'message','annotation-retry':'retry','annotation-stop':'stop'}[name]),payload);conversation=data.conversation;}else{if(payload.autoReply)throw Error(annotationReason());const existing=record.conversation||{id:record.id,status:'saved',hasAgent:false,messages:[]};const found=(existing.messages||[]).find(m=>m.id===payload.messageId);if(found&&(found.text!==payload.text||found.autoReply!==false))throw Error('该发送请求内容已变化');conversation={...existing,messages:found?existing.messages:[...(existing.messages||[]),{id:payload.messageId,role:'user',text:payload.text,autoReply:false,status:'saved',createdAt:Date.now()/1000}]};const updated={...record,conversation};if(!annotationStorage('annotations',ann.items.map(c=>c.id===record.id?updated:c)))throw Error(ann.error);}record.conversation=conversation;mergeAnnotation(record);delete ann.requests[requestKey];annotationStorage('annotationRequests',ann.requests);if(name==='annotation-message'&&ann.chats[record.id]?.trim()===payload.text){ann.chats[record.id]='';annotationStorage('annotationChats',ann.chats);delete ann.replyAgent[record.id];annotationStorage('annotationReplyAgent',ann.replyAgent);if(ann.current===record.id&&$('annotation-followup'))$('annotation-followup').value='';}}catch(error){ann.error=error.message||'未收到确认，请重试同一条消息';}finally{ann.sending=false;renderAnnotations();}
+      }
+    }
+    function annotationEvent(e,eventPath){
+      e.stopImmediatePropagation();const field=eventPath[0],button=eventPath.find(el=>el?.dataset?.action),menu=eventPath.find(el=>el?.matches?.('details.annotation-menu'));
+      if(e.type==='pointerdown'&&button?.dataset.action==='annotation-create')e.preventDefault();
+      if(e.type==='click'&&button&&!button.disabled){e.preventDefault();if(menu)menu.open=false;annotationAction(button.dataset.action,button).catch(error=>{ann.error=error.message;renderAnnotations();});}
+      if(e.type==='click'&&!button&&!menu){const card=eventPath.find(el=>el?.classList?.contains('annotation-card'));if(card&&ann.current!==card.dataset.id&&!getSelection()?.toString()&&!ui.getSelection?.()?.toString()){openAnnotations(card.dataset.id);const record=ann.items.find(c=>c.id===card.dataset.id)||ann.draft;if(record)locateAnnotation(record);}}
+      if(e.type==='keydown'&&field.classList?.contains('annotation-card')&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openAnnotations(field.dataset.id);}
+      if(e.type==='input'&&['annotation-input','annotation-followup'].includes(field.id)){field.style.height='auto';field.style.height=Math.min(180,Math.max(66,field.scrollHeight))+'px';}
+      if(e.type==='input'&&field.id==='annotation-input'&&ann.draft){ann.draft.text=field.value;storeAnnotationDraft();updateAnnotationSend();}
+      if(e.type==='input'&&field.id==='annotation-followup'&&ann.current){ann.chats[ann.current]=field.value;annotationStorage('annotationChats',ann.chats);updateAnnotationSend();}
+      if(e.type==='change'&&field.id==='annotation-image-input')addAnnotationImages([...field.files]);
+      if(e.type==='paste'&&field.id==='annotation-input'){const files=[...(e.clipboardData?.items||[])].filter(item=>item.kind==='file').map(item=>item.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();const text=e.clipboardData.getData('text/plain');if(text){field.setRangeText(text,field.selectionStart,field.selectionEnd,'end');ann.draft.text=field.value;storeAnnotationDraft();}addAnnotationImages(files);}}
+      if(e.type==='keydown'){if(e.key==='Escape'){e.preventDefault();annotationAction('annotation-close');}if(['annotation-input','annotation-followup'].includes(field.id)&&e.key==='Enter'&&!e.isComposing&&e.keyCode!==229&&(e.metaKey||e.ctrlKey)){e.preventDefault();annotationAction(field.id==='annotation-followup'?'annotation-message':'annotation-send');}}
+    }
 
     function label(el) {
       return (el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('placeholder') || (el.innerText || el.textContent || '').trim().replace(/\s+/g,' ') || el.id || el.tagName.toLowerCase()).slice(0,100);
@@ -127,7 +525,7 @@
     function notice(message) { $('notice').textContent=message; clearTimeout(noticeTimer); noticeTimer=setTimeout(()=>$('notice').textContent='',4500); }
     function toolbar() {
       const n=state.items.filter(c=>c.status!=='resolved').length;
-      const markup = `<div class="bar ${state.active?'active':''}"><button data-action="move-toolbar" class="grip" aria-label="拖动评论工具栏" title="拖动工具栏">⠿</button>${state.active?`<strong><i></i>评论中</strong><div class="modes" aria-label="选区方式">${[['element','点选'],['area','框选'],['text','文字']].map(([v,t])=>`<button data-action="mode" data-mode="${v}" aria-pressed="${state.mode===v}">${t}</button>`).join('')}</div><button data-action="toggle" class="exit">退出评论</button>`:'<button data-action="toggle" class="enter">评论模式</button>'}<button data-action="list" aria-expanded="${state.list}">评论 <span class="count">${n}</span></button>${codexEnabled?codexButton():''}</div>${state.active?`<div class="hint">${state.mode==='text'?'拖选文字后添加评论':'点选元素，拖动可框选任意区域'} · Esc 取消选区</div>`:''}`;
+      const markup = `<div class="bar ${state.active?'active':''}"><button data-action="move-toolbar" class="grip" aria-label="拖动评论工具栏" title="拖动工具栏">⠿</button>${state.active?`<strong><i></i>评论中</strong><div class="modes" aria-label="选区方式">${[['element','点选'],['area','框选'],['text','文字']].map(([v,t])=>`<button data-action="mode" data-mode="${v}" aria-pressed="${state.mode===v}">${t}</button>`).join('')}</div><button data-action="toggle" class="exit">退出评论</button>`:'<button data-action="toggle" class="enter">评论模式</button>'}<button data-action="list" aria-expanded="${state.list}">评论 <span class="count">${n}</span></button><button data-action="annotations" aria-controls="annotation-panel" aria-expanded="${ann.open}">内容批注${ann.refreshPending?' · 有更新':''} <span class="count">${annotationPageRecords().filter(c=>c.status!=='resolved').length}</span></button>${codexEnabled?codexButton():''}</div>${state.active?`<div class="hint">${state.mode==='text'?'拖选文字后添加评论':'点选元素，拖动可框选任意区域'} · Esc 取消选区</div>`:''}`;
       // Focus and polling refreshes must not replace a button between pointerdown and click.
       if(markup!==toolbarMarkup){toolbarMarkup=markup;$('toolbar').innerHTML=markup;}
       positionCodex();
@@ -161,6 +559,7 @@
     }
     function showCodex(open,focus=false) {
       state.codexPanel=open;
+      if(open){ann.open=false;renderAnnotations();}
       if(open){state.list=false;renderList();}
       renderCodex();toolbar();
       if(focus&&open)$('codex-input')?.focus();
@@ -248,6 +647,7 @@
     }
     function setActive(active) {
       state.active=active; state.hover=null; state.drag=null;
+      if(active){ann.selection=null;ann.open=false;renderAnnotations();drawAnnotations();}
       document.documentElement.toggleAttribute('data-prototype-review-active',active);
       if (active) {
         if(fileMode)notice('离线文件保存评论与选区；本机评审入口可同时保存截图');
@@ -403,6 +803,7 @@
       state.selected={anchor:comment.anchor,page:comment.page,element:query(comment.anchor.selector)};state.editing=comment;state.note=comment.text;state.attachments=(comment.attachments||[]).map(image=>({...image}));state.adding=false;state.error='';editor();draw();
     }
     async function action(name, button) {
+      if(name==='annotations'||name.startsWith('annotation-')){await annotationAction(name,button);return;}
       const comment=state.items.find(c=>c.id===button?.dataset.id);
       if(state.saving && !['list'].includes(name)||state.adding&&!['list','cancel'].includes(name))return;
       if(name==='codex')await startCodex();
@@ -419,7 +820,7 @@
       if(name==='toggle')setActive(!state.active);
       if(name==='cancel'){cancelSelection();toolbar();}
       if(name==='mode'){state.mode=button.dataset.mode;state.drag=null;toolbar();}
-      if(name==='list'){state.list=!state.list;if(state.list){state.codexPanel=false;renderCodex();}renderList();toolbar();draw();}
+      if(name==='list'){ann.open=false;renderAnnotations();state.list=!state.list;if(state.list){state.codexPanel=false;renderCodex();}renderList();toolbar();draw();}
       if(name==='filter'){state.all=!state.all;renderList();}
       if(name==='refresh')await refresh();
       if(name==='save')await save();
@@ -448,7 +849,7 @@
           const attachments=await Promise.all((c.attachments||[]).map(async image=>({...image,dataUrl:image.dataUrl||await embedded(image.url)})));
           return {...c,attachments,...(c.screenshot&&!c.screenshotData?{screenshotData:await embedded(c.screenshot)}:{})};
         }));
-        const blob=new Blob([JSON.stringify({format:'prototype-review',version:2,comments:copy},null,2)],{type:'application/json'});
+        const blob=new Blob([JSON.stringify({format:'prototype-review',version:2,comments:copy,annotations:await embeddedAnnotations()},null,2)],{type:'application/json'});
         const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='原型评论-'+new Date().toISOString().slice(0,10)+'.json';
         // An internal download is allowed; ordinary page links remain intercepted.
         a.dataset.reviewExport='true';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
@@ -464,13 +865,18 @@
     }
     function handle(e) {
       const eventPath=e.composedPath();
+      syncAnnotationIdentity();
+      observeAnnotationEditing(e,eventPath);
       if(eventPath.some(el=>el?.dataset?.reviewExport))return;
+      if(e.type==='click')closeAnnotationMenus(eventPath.find(el=>el?.matches?.('details.annotation-menu')));
+      if(e.type==='keydown'&&e.key==='Escape'&&closeAnnotationMenus(null,true)){e.preventDefault();e.stopImmediatePropagation();return;}
       if(state.drag?.toolbar&&e.type==='pointermove'){
         e.preventDefault();e.stopImmediatePropagation();const d=state.drag;
         $('toolbar').style.cssText=`left:${Math.max(0,Math.min(innerWidth-$('toolbar').offsetWidth,d.left+e.clientX-d.x))}px;top:${Math.max(0,Math.min(innerHeight-90,d.top+e.clientY-d.y))}px;bottom:auto;transform:none;`;positionCodex();return;
       }
       if(state.drag?.toolbar&&e.type==='pointerup'){e.preventDefault();e.stopImmediatePropagation();state.drag=null;return;}
       const own=eventPath.includes(host);
+      if(own&&eventPath.some(el=>['annotation-panel','annotation-selection','annotation-highlights'].includes(el?.id))){annotationEvent(e,eventPath);return;}
       if(own){
         // Catch at window, before document-level outside-click and focus traps.
         e.stopImmediatePropagation();
@@ -504,7 +910,13 @@
       }
       if(e.type==='keydown'&&e.key==='Escape'&&state.codexPanel&&!state.selected){e.preventDefault();e.stopImmediatePropagation();showCodex(false);return;}
       if(e.type==='pointerdown'&&state.codexPanel)showCodex(false);
-      if(!state.active)return;
+      if(!state.active){
+        if(e.type==='pointerdown'&&e.button===0)ann.pointer={x:e.clientX,y:e.clientY};
+        if(e.type==='click'&&ann.pointer){const pointer=ann.pointer;ann.pointer=null;if(Math.hypot(e.clientX-pointer.x,e.clientY-pointer.y)<5&&!getSelection()?.toString()&&!e.target.closest?.('a,button,input,textarea,select,[contenteditable]')){const matches=annotationVisibleRecords().filter(c=>{const r=restoreAnnotationRange(c.anchor);return r&&[...r.getClientRects()].some(b=>e.clientX>=b.left&&e.clientX<=b.right&&e.clientY>=b.top&&e.clientY<=b.bottom);});if(matches.length){const chosen=matches.find(c=>c.id===ann.current)||matches.find(c=>c.id===ann.lastAnchor)||matches[0];ann.lastAnchor=chosen.id;openAnnotations(chosen.id);}else if(ann.open&&ann.current){ann.current=null;renderAnnotations();drawAnnotations();}}}
+        if(e.type==='pointerup'||e.type==='keyup')scheduleAnnotationSelection();
+        if(e.type==='keydown'&&e.key==='Escape'){if(ann.open){e.preventDefault();annotationAction('annotation-close');}else if(ann.selection){ann.selection=null;getSelection()?.removeAllRanges();drawAnnotations();}}
+        return;
+      }
       e.stopImmediatePropagation();
       if(e.type==='wheel')return; // Keep native scrolling; block application wheel handlers.
       const fieldTarget=e.target?.matches?.('textarea,input[type=text],input:not([type]),input[type=search],input[type=url],input[type=tel]')?e.target:null;
@@ -546,15 +958,27 @@
       if(e.type==='pointercancel')state.drag=null;
     }
     delegate=handle;
-    window.addEventListener('scroll',draw,true);
-    window.addEventListener('resize',()=>{editor();draw();positionCodex();});
+    window.addEventListener('scroll',()=>{draw();drawAnnotations();},true);
+    window.addEventListener('resize',()=>{editor();draw();positionCodex();if(ann.open){const previous=ann.layout;syncAnnotationLayout();renderAnnotations();if(previous!=='drawer'&&ann.layout==='drawer')requestAnimationFrame(()=>ui.querySelector('.annotation-card[data-active=true] .annotation-compose')?.scrollIntoView({block:'end'}));}drawAnnotations();});
+    new ResizeObserver(()=>{if(ann.open)layoutAnnotationCards();}).observe($('annotation-panel'));
     new ResizeObserver(positionCodex).observe($('toolbar'));
     new ResizeObserver(positionCodex).observe($('codex-panel'));
     let drawing=false;
-    new MutationObserver(()=>{if(drawing)return;drawing=true;requestAnimationFrame(()=>{drawing=false;draw();});}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+    new MutationObserver(()=>{if(drawing)return;drawing=true;requestAnimationFrame(()=>{drawing=false;draw();drawAnnotations();});}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
     window.addEventListener('blur',()=>{state.drag=null;});
     window.PrototypeReview={version:1};
-    toolbar();refresh();
+    window.addEventListener('pagehide',saveAnnotationView);
+    let viewSaveQueued=false;
+    window.addEventListener('scroll',()=>{if(!viewSaveQueued){viewSaveQueued=true;requestAnimationFrame(()=>{viewSaveQueued=false;saveAnnotationView();});}},{capture:true,passive:true});
+    window.addEventListener('compositionstart',()=>{ann.composing=true;},true);
+    window.addEventListener('compositionend',()=>{ann.composing=false;},true);
+    toolbar();refresh();refreshAnnotations();renderAnnotations();
+    document.addEventListener('selectionchange',scheduleAnnotationSelection);
+    let annotationSyncing=false;
+    const annotationSync=async()=>{if(annotationSyncing||document.hidden)return;annotationSyncing=true;try{await refreshAnnotations();}finally{annotationSyncing=false;}};
+    setInterval(annotationSync,1500);window.addEventListener('focus',annotationSync);
+    window.addEventListener('hashchange',annotationSync);window.addEventListener('popstate',annotationSync);
+    document.addEventListener('visibilitychange',annotationSync);
     if(codexEnabled){
       let syncing=false;
       const sync=async()=>{if(syncing||document.hidden)return;syncing=true;try{await syncCodex();}finally{syncing=false;}};

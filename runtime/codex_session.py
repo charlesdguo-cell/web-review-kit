@@ -112,6 +112,9 @@ def run_session(directory, lock_fd, prompt_for):
     def save():
         nonlocal last_save
         write_json(directory / 'status.json', job)
+        if request.get('kind') == 'annotation':
+            from annotation_tasks import publish_conversation
+            publish_conversation(request['data'], directory, job, request)
         last_save = time.monotonic()
 
     def notify(method, params):
@@ -161,7 +164,7 @@ def run_session(directory, lock_fd, prompt_for):
         nonlocal active
         job.update(status='running', error='', progress='正在处理你的消息')
         inputs = [{'type': 'text', 'text': text}]
-        if first and request.get('executionConfig'):
+        if first and request.get('executionConfig') and request.get('kind') != 'annotation':
             inputs.append({'type': 'skill', 'name': 'web-review', 'path': request['executionConfig']['skillPath']})
         result = client.call('turn/start', {'threadId': job['threadId'], 'input': inputs})
         turn = result['turn']
@@ -174,16 +177,16 @@ def run_session(directory, lock_fd, prompt_for):
             if active:
                 try:
                     client.call('turn/steer', {'threadId': job['threadId'], 'expectedTurnId': active,
-                                              'input': [{'type': 'text', 'text': message['text']}]})
+                                              'input': [{'type': 'text', 'text': message.get('inputText', message['text'])}]})
                 except UnsupportedClientRequest:
                     raise
                 except RpcError:
                     # A turn can finish while the message is in flight. Continue on the same thread.
                     if active is not None:
                         raise
-                    begin(message['text'])
+                    begin(message.get('inputText', message['text']))
             else:
-                begin(message['text'])
+                begin(message.get('inputText', message['text']))
             message.update(status='sent', deliveredAt=time.time())
         except UnsupportedClientRequest:
             raise

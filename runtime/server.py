@@ -40,6 +40,8 @@ class ReviewHTTPServer(ThreadingHTTPServer):
     request_queue_size = 128
 
     def __init__(self, address, handler, data_dir):
+        self.annotation_tick = None
+        self.annotation_error = ''
         self._writers = threading.Condition()
         self._active_writers = 0
         self._closing = False
@@ -82,6 +84,18 @@ class ReviewHTTPServer(ThreadingHTTPServer):
                 while self._active_writers:
                     self._writers.wait()
                 self._release_data_lock()
+
+    def service_actions(self):
+        # The HTTP lifecycle owns queue dispatch; it never creates a second launcher.
+        if self.annotation_tick is not None and not self._closing:
+            try:
+                with self.data_writer():
+                    self.annotation_tick()
+                self.annotation_error = ''
+            except (OSError, ValueError, KeyError, TypeError, DataLockError):
+                # Malformed/unavailable private queue state must not take down the
+                # page server or the existing review APIs, nor be silently replayed.
+                self.annotation_error = '批注任务队列暂不可用，请检查本机任务记录'
 
 
 def attachment_image(data_url):
@@ -153,10 +167,28 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
     api = base_path + '/__review/'
     lock = threading.Lock()
     manifest = data / 'comments.json'
+    annotation_manifest = data / 'annotations.json'
 
     def records():
         inspect_data_version(data)
         return json.loads(manifest.read_text(encoding='utf-8')) if manifest.exists() else []
+
+    def annotation_records():
+        inspect_data_version(data)
+        try:
+            items = json.loads(annotation_manifest.read_text(encoding='utf-8')) if annotation_manifest.exists() else []
+        except (ValueError, OSError) as error:
+            raise DataVersionError('Cannot read content annotations') from error
+        if not isinstance(items, list) or any(not isinstance(item, dict) or not isinstance(item.get('id'), str) for item in items):
+            raise DataVersionError('Invalid content annotation manifest')
+        return items
+
+    def annotation_agent():
+        available = bool(codex_tasks and codex_tasks.executable and os.access(codex_tasks.executable, os.X_OK))
+        if server.annotation_error:
+            return {'enabled': bool(codex_tasks), 'available': False, 'reason': server.annotation_error}
+        return {'enabled': bool(codex_tasks), 'available': available,
+                'reason': '' if available else '未检测到可执行的本机 Codex' if codex_tasks else '当前入口仅保存批注，自动回复需在本机启用 Agent'}
 
     def build_id():
         digest = hashlib.sha256()
@@ -258,7 +290,15 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 result['attachments'] = [{**image, 'url': base_path + image['url']} for image in result['attachments']]
             return result
 
-        def prepare_attachments(self, comment, previous):
+        def public_annotation(self, annotation):
+            from annotation_tasks import merge_saved_messages, read_conversation
+            result = self.public_record(annotation)
+            result['conversation'] = (codex_tasks.annotation_status(annotation['id']) if codex_tasks else
+                                      read_conversation(data, annotation['id']))
+            result['conversation'] = merge_saved_messages(data, annotation['id'], result['conversation'])
+            return result
+
+        def prepare_attachments(self, comment, previous, annotation=False):
             existing = {image['id']: image for image in (previous or {}).get('attachments', [])}
             images = comment.get('attachments', list(existing.values()))
             if not isinstance(images, list) or len(images) > MAX_ATTACHMENTS:
@@ -273,8 +313,9 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 if image.get('dataUrl'):
                     mime, content = attachment_image(image['dataUrl'])
                     filename = hashlib.sha256(content).hexdigest() + '.' + IMAGE_EXTENSIONS[mime]
-                    image_path = data / 'attachments' / comment['id'] / filename
-                    url = '/__review/attachments/' + comment['id'] + '/' + filename
+                    relative = ('annotations/' if annotation else '') + comment['id'] + '/' + filename
+                    image_path = data / 'attachments' / relative
+                    url = '/__review/attachments/' + relative
                     name = image.get('name') or f'附图 {index + 1}'
                     if not isinstance(name, str) or len(name) > 120:
                         raise ValueError('附图名称过长')
@@ -308,6 +349,14 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                     except DataVersionError as error:
                         return self.send(409, {'error': str(error), 'code': error.code})
                     return self.send(200, {'comments': [self.public_record(c) for c in items], 'storage': '服务器共享评审' if origins else str(manifest), 'build': build_id()})
+            if path == '/__review/annotations':
+                with lock:
+                    try:
+                        items = annotation_records()
+                        return self.send(200, {'annotations': [self.public_annotation(item) for item in items],
+                                               'build': build_id(), 'agent': annotation_agent()})
+                    except DataVersionError as error:
+                        return self.send(409, {'error': str(error), 'code': error.code})
             if path == '/__review/health':
                 if project_config is not None:
                     health = configured_health(project_config)
@@ -340,7 +389,7 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 html = target.read_text()
                 # Every HTML route receives the same module; no page registry or adapters.
                 html = re.sub(r'<script\b[^>]*data-prototype-review[^>]*>\s*</script\s*>', '', html, flags=re.I)
-                script = f'<script src="{api}review.js" data-prototype-review{identity_attributes} data-endpoint="{api}" data-base-path="{base_path}/" data-shared="{str(bool(origins)).lower()}" data-codex="{str(bool(codex_tasks)).lower()}"></script>'
+                script = f'<script src="{api}review.js" data-prototype-review{identity_attributes} data-build="{build_id()}" data-endpoint="{api}" data-base-path="{base_path}/" data-shared="{str(bool(origins)).lower()}" data-codex="{str(bool(codex_tasks)).lower()}"></script>'
                 html = re.sub(r'(<head\b[^>]*>)', lambda m: m[0] + script, html, count=1, flags=re.I) if re.search(r'<head\b', html, re.I) else script + html
                 return self.send(200, html.encode(), 'text/html; charset=utf-8')
             return self.send_file(target)
@@ -350,6 +399,8 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 return self.send(403, {'error': '请从已配置的评审页面保存'})
             if urlsplit(self.path).path in (api + 'codex', api + 'codex/stop', api + 'codex/message'):
                 return self.codex_request()
+            if urlsplit(self.path).path in (api + 'annotations', api + 'annotations/message', api + 'annotations/retry', api + 'annotations/stop'):
+                return self.annotation_request()
             if urlsplit(self.path).path != api + 'comments':
                 return self.send(404, {'error': '不存在'})
             try:
@@ -373,27 +424,32 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
             except OSError:
                 return self.send(500, {'error': '评论文件保存失败，内容仍保留在输入框中'})
 
-        def save_comment(self, payload, comment):
+        def save_comment(self, payload, comment, annotation=False):
             with lock, self.server.data_writer():
                 require_writable_data(data, project_config.project_id if project_config is not None else None)
                 if project_config is not None and payload.get('projectId', project_config.project_id) != project_config.project_id:
                     raise DataVersionError('Review submission belongs to a different project')
-                items = records()
+                items = annotation_records() if annotation else records()
+                response_key = 'annotation' if annotation else 'comment'
                 previous = next((c for c in items if c['id'] == comment['id']), None)
                 try:
-                    attachments, pending = self.prepare_attachments(comment, previous)
+                    attachments, pending = self.prepare_attachments(comment, previous, annotation)
                 except ValueError:
                     if previous and payload.get('expectedUpdate') != previous.get('updatedAt'):
                         return 409, {'error': '这条评论已更新，请重新打开后再保存'}
                     raise
                 if not comment['text'].strip() and not attachments:
                     raise ValueError('请填写评论或添加图片')
+                if annotation and previous and same_submission(previous, comment):
+                    # Requesting an Agent for a saved annotation is not a content
+                    # edit; preserve its evidence version even with a fresh token.
+                    return 200, {response_key: self.public_record(previous)}
                 if previous and payload.get('expectedUpdate') != previous.get('updatedAt'):
                     # A committed edit may lose its response. A retry of that
                     # exact record is already satisfied; do not rewrite it or
                     # accept any stale changes to content, status or anchors.
                     if same_submission(previous, comment):
-                        return 200, {'comment': self.public_record(previous)}
+                        return 200, {response_key: self.public_record(previous)}
                     return 409, {'error': '这条评论已更新，请重新打开后再保存'}
                 screenshot = comment.pop('screenshotData', None)
                 if previous:
@@ -404,7 +460,7 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                     image = base64.b64decode(screenshot.split(',', 1)[1], validate=True)
                     if not image.startswith(b'\x89PNG\r\n\x1a\n'):
                         raise ValueError('截图格式无效')
-                    image_path = data / 'screenshots' / (comment['id'] + '.png')
+                    image_path = data / 'screenshots' / (('annotation-' if annotation else '') + comment['id'] + '.png')
                     pending.append((image_path, image))
                     comment['screenshot'] = '/__review/screenshots/' + image_path.name
                 else:
@@ -423,8 +479,120 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                         temporary = image_path.with_name(image_path.name + '.tmp')
                         temporary.write_bytes(image)
                         os.replace(temporary, image_path)
-                atomic_json(manifest, items)
-                return 200, {'comment': self.public_record(comment)}
+                atomic_json(annotation_manifest if annotation else manifest, items)
+                return 200, {response_key: self.public_record(comment)}
+
+        def annotation_request(self):
+            from codex_tasks import TaskConflict
+            route = urlsplit(self.path).path
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                maximum = 32 * 1024 * 1024 if route == api + 'annotations' else 32768
+                if not 0 < length <= maximum or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                    raise ValueError('批注请求格式无效')
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError('批注请求格式无效')
+                if route == api + 'annotations':
+                    if set(payload) - {'annotation', 'expectedUpdate', 'autoReply', 'requestId', 'projectId'}:
+                        raise ValueError('批注请求包含未知字段')
+                    auto = payload.get('autoReply', False)
+                    if type(auto) is not bool:
+                        raise ValueError('自动回复参数无效')
+                    if auto and not codex_tasks:
+                        return self.send(404, {'error': '当前入口未启用自动回复'})
+                    if auto and not re.fullmatch(r'[a-f0-9]{32}', str(payload.get('requestId', ''))):
+                        raise ValueError('请求编号无效')
+                    annotation = payload.get('annotation')
+                    if not isinstance(annotation, dict):
+                        raise ValueError('批注内容无效')
+                    annotation = dict(annotation)
+                    annotation.pop('conversation', None)
+                    if not isinstance(annotation.get('id'), str) or not re.fullmatch(r'[a-zA-Z0-9_-]{8,80}', annotation['id']):
+                        raise ValueError('批注编号无效')
+                    if not isinstance(annotation.get('text'), str) or len(annotation['text']) > 10000:
+                        raise ValueError('批注文字不能超过 10000 字')
+                    if annotation.get('status') not in ('open', 'changed', 'resolved'):
+                        raise ValueError('批注状态无效')
+                    anchor = annotation.get('anchor')
+                    if (not isinstance(annotation.get('page'), dict) or not isinstance(annotation['page'].get('path'), str) or
+                            not isinstance(anchor, dict) or anchor.get('kind') != 'text' or
+                            not isinstance(anchor.get('selector'), str) or not isinstance(anchor.get('selectedText'), str) or
+                            not anchor['selectedText'].strip()):
+                        raise ValueError('批注需要原文选区和页面位置')
+                    if auto:
+                        # A lost first response may be retried after the Agent has
+                        # already changed the record. Confirm the immutable accepted
+                        # request before optimistic save validation; never replay its
+                        # old status or overwrite the current annotation.
+                        frozen = codex_tasks.annotation_submission(annotation['id'], payload['requestId'])
+                        if frozen is not None:
+                            self.prepare_attachments(annotation, frozen, annotation=True)
+                            if not same_submission(frozen, annotation):
+                                raise TaskConflict('已发送请求的内容不能更改，请在批注中继续讨论。')
+                            with lock:
+                                current = next((item for item in annotation_records() if item['id'] == annotation['id']), None)
+                                if current is None:
+                                    raise TaskConflict('已发送的批注记录已变化，请刷新核对。')
+                                return self.send(200, {'annotation': self.public_annotation(current)})
+                    status, result = self.save_comment(payload, annotation, annotation=True)
+                    if status != 200:
+                        return self.send(status, result)
+                    saved = result['annotation']
+                    if auto:
+                        try:
+                            with self.server.data_writer():
+                                result['annotation']['conversation'] = codex_tasks.enqueue_annotation(
+                                    saved, f'http://127.0.0.1:{self.server.server_port}', payload['requestId'])
+                        except (TaskConflict, ValueError, OSError) as error:
+                            # Saving evidence succeeded. Keep its identity/version so the UI
+                            # retries dispatch instead of creating a duplicate annotation.
+                            result['agentError'] = str(error)
+                    if 'conversation' not in saved:
+                        saved.update(conversation=self.public_annotation(saved)['conversation'])
+                    return self.send(200, result)
+                action = route.rsplit('/', 1)[1]
+                required = {'message': {'annotationId', 'messageId', 'text'},
+                            'retry': {'annotationId', 'requestId'}, 'stop': {'annotationId'}}[action]
+                allowed = required | ({'autoReply'} if action == 'message' else set())
+                if not required <= set(payload) or set(payload) - allowed or not isinstance(payload.get('annotationId'), str):
+                    raise ValueError('批注对话请求格式无效')
+                auto = payload.get('autoReply', True)
+                if type(auto) is not bool:
+                    raise ValueError('自动回复参数无效')
+                if not codex_tasks and (action != 'message' or auto):
+                    return self.send(404, {'error': '当前入口未启用自动回复'})
+                if action in ('message', 'retry'):
+                    token = payload['messageId' if action == 'message' else 'requestId']
+                    if not isinstance(token, str) or not re.fullmatch(r'[a-f0-9]{32}', token):
+                        raise ValueError('请求编号无效')
+                if action == 'message' and (not isinstance(payload['text'], str) or not payload['text'].strip() or len(payload['text']) > 4000):
+                    raise ValueError('请输入 1–4000 字的消息')
+                with lock, self.server.data_writer():
+                    require_writable_data(data, project_config.project_id if project_config is not None else None)
+                    record = next((item for item in annotation_records() if item['id'] == payload['annotationId']), None)
+                    if record is None:
+                        return self.send(404, {'error': '批注不存在'})
+                    url = f'http://127.0.0.1:{self.server.server_port}'
+                    if action == 'message':
+                        if auto:
+                            conversation = codex_tasks.annotation_message(record, url, payload['messageId'], payload['text'])
+                        else:
+                            from annotation_tasks import save_annotation_message
+                            conversation = save_annotation_message(data, record['id'], payload['messageId'], payload['text'])
+                    elif action == 'retry':
+                        conversation = codex_tasks.annotation_retry(record, url, payload['requestId'])
+                    else:
+                        conversation = codex_tasks.annotation_stop(record['id'])
+                return self.send(200 if action == 'stop' or not auto else 202, {'conversation': conversation})
+            except (DataVersionError, DataLockError) as error:
+                return self.send(409, {'error': str(error), 'code': error.code})
+            except TaskConflict as error:
+                return self.send(409, {'error': str(error)})
+            except (ValueError, KeyError, TypeError) as error:
+                return self.send(400, {'error': str(error)})
+            except OSError:
+                return self.send(500, {'error': '批注服务暂不可用，内容已保留，可稍后重试'})
 
         def codex_request(self):
             if not codex_tasks:
@@ -467,7 +635,10 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
             except OSError:
                 return self.send(500, {'error': '本机任务暂时无法启动，请查看服务日志。'})
 
-    return ReviewHTTPServer((bind_host, port), Handler, data)
+    server = ReviewHTTPServer((bind_host, port), Handler, data)
+    if codex_tasks:
+        server.annotation_tick = codex_tasks.tick_annotations
+    return server
 
 
 def configured_health(config):
