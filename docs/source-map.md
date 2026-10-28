@@ -20,6 +20,8 @@ The subsequent [control refinement](superpowers/plans/2026-10-28-annotation-cont
 
 The separately authorized [rc.8 publication and Charlee adoption](superpowers/plans/2026-10-28-rc8-release.md) packages these additions. `release_manager.py` recognizes the closed pre-annotation inventory only for rc.1–rc.7, retaining per-file hashes, actual inventory, tree hash, dependency and receipt checks; newer versions require the annotation module. Three release regressions cover historical helper routing without mutation, strict version gating and integrity rejection. Publication and consumer validation are recorded separately from the development evidence above.
 
+The subsequent [speaker identity refinement](superpowers/plans/2026-10-28-annotation-identity.md) updates only annotation presentation in `review.js`/CSS: saved initial messages and followups show inline `我：` / `Agent：` prefixes, including the standalone export. Drafts retain their compact layout; stored text, export JSON, task and data APIs are unchanged. Existing sidebar assertions query the separate content span so their deduplication checks still compare the exact original text.
+
 ## Original extraction baseline
 
 Baseline captured 2026-10-27 from the **current working tree**, not Git HEAD, of `morsea-prototype`. Source HEAD was `9ce898fa7178befa4ac830cdbd1577255981a971`; the working tree was dirty and was not committed or changed by extraction. No business component, production review record, screenshot or asset is required by this repository's tests.

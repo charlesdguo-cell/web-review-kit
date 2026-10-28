@@ -301,13 +301,13 @@ begin
   raise 'First Agent turn lost saved context' unless invocation['prompt'].include?('Saved followup context only.') && invocation['prompt'].include?('Respond only to this explicit current request.')
   check.call('First explicit Agent followup includes saved context once without replaying requests', "#{get}.then(a=>a.find(x=>x.id===#{note_id.to_json}).conversation.messages.some(m=>m.status==='saved'&&m.autoReply===false))")
   c.wait_for("#{ui}.querySelector('#annotation-thread').textContent.includes('临时任务完成')")
-  check.call('Root note and final reply each appear once in active card', "(()=>{const card=#{ui}.querySelector('.annotation-card[data-id=\"#{note_id}\"]');return card.querySelectorAll('.from-agent').length===1&&[...card.querySelectorAll('.annotation-text,.from-user p')].filter(p=>p.textContent==='Initial saved note without Agent.').length===1&&[...card.querySelectorAll('.from-agent p')].filter(p=>p.textContent==='临时任务完成，正式评论未修改。').length===1})()")
+  check.call('Root note and final reply each appear once in active card', "(()=>{const card=#{ui}.querySelector('.annotation-card[data-id=\"#{note_id}\"]');return card.querySelectorAll('.from-agent').length===1&&[...card.querySelectorAll('.annotation-text .annotation-message-content,.from-user .annotation-message-content')].filter(p=>p.textContent==='Initial saved note without Agent.').length===1&&[...card.querySelectorAll('.from-agent .annotation-message-content')].filter(p=>p.textContent==='临时任务完成，正式评论未修改。').length===1})()")
   2.times do |index|
     c.wait_for("!#{ui}.querySelector('#annotation-agent-toggle').disabled")
     click.call('#annotation-agent-toggle') if c.evaluate("#{ui}.querySelector('#annotation-agent-toggle').getAttribute('aria-checked')==='true'")
     fill.call('#annotation-followup','Legitimate repeated saved reply.')
     click.call('[data-action=annotation-message]')
-    c.wait_for("[...#{ui}.querySelectorAll('#annotation-thread .from-user p')].filter(p=>p.textContent==='Legitimate repeated saved reply.').length===#{index+1}&&#{ui}.querySelector('#annotation-followup').value===''")
+    c.wait_for("[...#{ui}.querySelectorAll('#annotation-thread .from-user .annotation-message-content')].filter(p=>p.textContent==='Legitimate repeated saved reply.').length===#{index+1}&&#{ui}.querySelector('#annotation-followup').value===''")
   end
   check.call('Legitimate equal-text followups retain distinct message identities', "#{get}.then(a=>{const m=a.find(x=>x.id===#{note_id.to_json}).conversation.messages.filter(m=>m.text==='Legitimate repeated saved reply.');return m.length===2&&m[0].id!==m[1].id})")
   raise 'Repeated save-only notes launched Agent' unless rpc.call('turn/start') == before+1
