@@ -79,7 +79,7 @@
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const unique = selector => { try { return document.querySelectorAll(selector).length === 1; } catch { return false; } };
     const query = selector => { try { return document.querySelector(selector); } catch { return null; } };
-    const state = {active:false, mode:'element', selected:null, hover:null, drag:null, note:'', attachments:[], adding:false, items:[], list:false, all:false, saving:false, error:'', build:'local', animations:[], videos:[], editing:null, childStack:[], codex:null, codexAvailable:false, codexReason:'正在连接本机 Codex', codexPanel:false, codexSending:false, chatSending:false, chatError:'', chatDrafts:{}, chatRequests:{}};
+    const state = {active:false, mode:'element', selected:null, hover:null, drag:null, note:'', attachments:[], adding:false, items:[], list:false, all:false, saving:false, error:'', build:'local', animations:[], videos:[], editing:null, childStack:[], codex:null, codexAvailable:false, codexReason:'正在连接本机 Codex', codexPanel:false, codexSending:false, chatSending:false, chatError:'', chatDrafts:{}, chatRequests:{}, historyOpen:false, historyData:null, historyJob:null, historyLoading:false, historyError:'', historyRequest:0, historyRevision:0};
     try{state.chatDrafts=readStorage(sessionStorage,'codexDrafts','{}');}catch{}
     try{state.chatRequests=readStorage(sessionStorage,'codexRequests','{}');}catch{}
     let shotPromise = null, screenshot = null, libraryPromise = null, noticeTimer, listFocus = null, toolbarMarkup = '';
@@ -558,7 +558,7 @@
       const blocked=state.codexSending||(canStart&&(unsavedReview()||!state.codexAvailable))||(!job&&(!canStart||!state.codexAvailable));
       const title=canStart&&unsavedReview()?'请先保存当前评论':busy?'查看进度或补充要求':canStart?`处理全部 ${pending.length} 条待处理评论（所有页面）`:job?'查看结果或继续对话':state.codexReason||'暂无待处理评论';
       const ended={completed:'已完成',failed:'未完成',cancelled:'已停止'}[job?.status]||'查看任务';
-      return `<button class="codex-launch ${busy?'running':''}" data-action="codex" title="${esc(title)}" aria-expanded="${state.codexPanel}" aria-controls="codex-panel" ${blocked?'disabled':''}>${busy?'<i aria-hidden="true"></i>':''}${busy?`Codex 处理中 ${job.completedCount||0}/${batchComments().length}`:canStart?`交给 Codex · ${pending.length}`:job?`${ended} · 查看结果`:'交给 Codex'}</button>${job&&canStart?`<button class="codex-history" data-action="codex-details" aria-label="继续当前任务对话" title="查看上次任务与对话" aria-expanded="${state.codexPanel}">⌃</button>`:''}`;
+      return `<button class="codex-launch ${busy?'running':''}" data-action="codex" title="${esc(title)}" aria-expanded="${state.codexPanel}" aria-controls="codex-panel" ${blocked?'disabled':''}>${busy?'<i aria-hidden="true"></i>':''}${busy?`Codex 处理中 ${job.completedCount||0}/${batchComments().length}`:canStart?`交给 Codex · ${pending.length}`:job?`${ended} · 查看结果`:'交给 Codex'}</button>${job&&canStart?`<button class="codex-history" data-action="codex-details" aria-label="继续当前任务对话" title="查看上次任务与对话" aria-expanded="${state.codexPanel}">⌃</button>`:''}<button class="codex-history" data-action="codex-history" aria-label="查看历史评论批次" title="查看历史评论批次" aria-expanded="${state.codexPanel&&state.historyOpen}" aria-controls="codex-panel">历史批次</button>`;
     }
     function positionCodex() {
       const panel=$('codex-panel');if(!state.codexPanel||!panel.firstChild)return;
@@ -570,7 +570,7 @@
       panel.dataset.side=up?'above':'below';
     }
     function showCodex(open,focus=false) {
-      state.codexPanel=open;
+      state.codexPanel=open;state.historyOpen=false;state.historyRequest++;
       if(open){ann.open=false;renderAnnotations();}
       if(open){state.list=false;renderList();}
       renderCodex();toolbar();
@@ -589,8 +589,9 @@
       const panel=$('codex-panel');
       $('editor').hidden=state.codexPanel;
       if(!state.codexPanel){panel.innerHTML='';return;}
+      if(state.historyOpen){renderCodexHistory();return;}
       const job=state.codex,busy=codexBusy(),comments=batchComments(),remaining=job?.pendingCount??comments.length;
-      if(!job)return;
+      if(!job){panel.innerHTML='';return;}
       const status={starting:'正在启动',running:'正在处理',stopping:'正在停止',completed:'本轮已完成',failed:'未完成',cancelled:'已停止'}[job.status]||'连接中';
       const labels={open:'待处理',changed:'待验收',resolved:'已解决',unknown:'状态待核对'};
       // Keep the composer and its IME, selection, focus, and draft intact during polling.
@@ -610,6 +611,43 @@
       $('codex-input').disabled=!job.canChat||job.status==='stopping';
       setMarkup($('codex-footer'),`<span>${busy?'新评论留到下一批':'修改结果仍需你验收'}</span><div>${busy?`<button data-action="codex-stop" ${job.status==='stopping'?'disabled':''}>停止任务</button>`:`${remaining?`<button data-action="codex-retry" data-id="${esc(job.id)}">重试未完成</button>`:''}<button data-action="codex-reload">刷新原型</button>`}</div>`);
       updateChatSend();positionCodex();
+    }
+    function historyStatus(job) {
+      return {starting:'启动中',running:'处理中',stopping:'停止中',completed:'已完成',failed:'未完成',cancelled:'已停止'}[job.status]||'状态待核对';
+    }
+    function historyTime(job) {
+      return job.startedAt?new Date(job.startedAt*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'时间未记录';
+    }
+    function renderCodexHistory() {
+      const panel=$('codex-panel'),revision=String(state.historyRevision);
+      if(panel.firstElementChild?.dataset.history===revision){positionCodex();return;}
+      const job=state.historyJob,data=state.historyData;
+      let content='';
+      if(state.historyLoading)content='<p role="status">正在读取历史批次…</p>';
+      else if(state.historyError)content=`<p class="error" role="alert">${esc(state.historyError)}</p><button data-action="codex-history">重新读取</button>`;
+      else if(job){
+        const messages=job.messages?.length?job.messages:job.result?[{role:'assistant',text:job.result}]:[];
+        content=`<p class="codex-summary">${esc(historyTime(job))} · ${esc(historyStatus(job))}</p><p class="codex-history-subject">${esc(job.title)}</p><div class="codex-thread" role="log" aria-label="历史任务对话">${messages.filter(m=>m.text).map(m=>`<article class="codex-message ${m.role==='user'?'from-user':'from-agent'}"><div class="codex-message-meta"><small>${m.role==='user'?'你':'Codex'}</small></div><p>${esc(m.text)}</p></article>`).join('')||'<p>此任务没有保存对话消息。</p>'}</div>${job.result?`<details class="codex-records"><summary>最终处理结果</summary><p class="codex-history-result">${esc(job.result)}</p></details>`:''}${job.error?`<p class="error">${esc(job.error)}</p>`:''}<details class="codex-records"><summary>本批评论 ${(job.comments||[]).length}</summary><ol class="codex-comments">${(job.comments||[]).map(c=>`<li><span>#${esc(c.number)} ${esc(c.text||'图片评论')}</span></li>`).join('')}</ol></details><button data-action="codex-history" data-offset="${data?.offset||0}">返回批次列表</button>`;
+      }else{
+        content=`<div class="codex-history-list">${(data?.jobs||[]).map(j=>`<button class="codex-history-row" data-action="codex-history-job" data-job-id="${esc(j.id)}"><span>${esc(j.title)}</span><small>${esc(historyTime(j))} · ${esc(historyStatus(j))}${j.id===data.currentId?' · 当前批次':''}</small></button>`).join('')||'<p>暂无历史评论批次。</p>'}</div><div class="codex-history-pages"><span>共 ${data?.total||0} 个批次</span><div>${data?.offset?`<button data-action="codex-history" data-offset="${Math.max(0,data.offset-20)}">上一页</button>`:''}${data?.nextOffset!=null?`<button data-action="codex-history" data-offset="${data.nextOffset}">下一页</button>`:''}</div></div>`;
+      }
+      panel.innerHTML=`<section class="panel codex-task" data-history="${revision}" role="dialog" aria-label="历史评论批次"><header><div><small>本机 Codex</small><strong>历史评论批次</strong></div><button data-action="codex-close" aria-label="收起历史批次">⌄</button></header>${content}<footer><span>历史记录仅供查看</span>${state.codex?'<button data-action="codex-details">返回当前任务</button>':''}</footer></section>`;
+      positionCodex();
+    }
+    async function loadCodexHistory(identity=null,offset=0) {
+      if(!codexEnabled)return;
+      if(!state.codexPanel||!state.historyOpen)showCodex(true);
+      state.historyOpen=true;state.historyJob=null;state.historyLoading=true;state.historyError='';state.historyRevision++;
+      const token=++state.historyRequest;renderCodex();
+      try{
+        const path=identity?'codex/history/'+encodeURIComponent(identity):'codex/history?offset='+offset+'&limit=20';
+        const response=await fetch(endpoint+path),data=await response.json();
+        if(!response.ok)throw Error(data.error||'历史任务读取失败');
+        if(token!==state.historyRequest||!state.historyOpen)return;
+        if(identity)state.historyJob=data.job;
+        else state.historyData={...data,offset};
+      }catch(error){if(token===state.historyRequest)state.historyError=error.message;}
+      finally{if(token===state.historyRequest){state.historyLoading=false;state.historyRevision++;renderCodex();}}
     }
     async function syncCodex() {
       if(!codexEnabled)return;
@@ -821,7 +859,9 @@
       if(name==='codex')await startCodex();
       if(name==='codex-retry')await startCodex(button.dataset.id);
       if(name==='codex-close'){showCodex(false);ui.querySelector('[data-action=codex]')?.focus();}
-      if(name==='codex-details')showCodex(!state.codexPanel);
+      if(name==='codex-history'){await loadCodexHistory(null,Number(button.dataset.offset)||0);}
+      if(name==='codex-history-job'){await loadCodexHistory(button.dataset.jobId);}
+      if(name==='codex-details')showCodex(state.historyOpen||!state.codexPanel);
       if(name==='codex-send')await sendCodexMessage();
       if(name==='codex-reload'){if(unsavedReview())notice('请先保存当前评论再刷新');else location.reload();}
       if(name==='codex-stop'&&state.codex){

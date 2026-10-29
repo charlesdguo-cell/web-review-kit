@@ -20,6 +20,11 @@ def run_browser_check():
         (root/'data/comments.json').write_text(json.dumps(comments))
         executable=root/'fake-codex';executable.write_text(FAKE_CODEX);executable.chmod(0o755)
         tasks=CodexTasks(root,root/'data',root/'jobs',str(executable))
+        for number in range(25):
+            saved=root/'jobs'/('history%03d'%number);saved.mkdir()
+            (saved/'status.json').write_text(json.dumps({'id':saved.name,'status':'completed',
+                'startedAt':number+1,'comments':[{'number':91+number,'text':'Saved history comment'}],
+                'result':'Legacy batch result <script>window.historyInjected=true</script>' if number==0 else 'Saved batch result'}))
         server=make_server(root/'pages',root/'data',0,codex_tasks=tasks)
         worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
         try:

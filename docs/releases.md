@@ -1,6 +1,6 @@
 # Global installation and optional project pins
 
-Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. The published prerelease is **[`0.1.0-rc.12`](https://github.com/charlesdguo-cell/web-review-kit/releases/tag/v0.1.0-rc.12)**. It prevents unstyled review controls from appearing before their stylesheet loads; a stylesheet failure leaves the review UI hidden and the page usable. It retains rc.11's global runtime selection and default installer activation. Existing releases remain immutable. Published from commit `4648439` on `feat/portable-review`; tag `v0.1.0-rc.12`. The downloaded archive, checksum and manifest match the verified source package.
+Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. The published prerelease is **[`0.1.0-rc.13`](https://github.com/charlesdguo-cell/web-review-kit/releases/tag/v0.1.0-rc.13)**. It adds a paginated, read-only history of comment batches with saved conversations/results, plus descriptive names for newly created Codex threads. Reading history never changes the current batch or resumes an old thread. It retains the global runtime selection and stylesheet-ready behavior of earlier releases. Existing releases remain immutable; publish this candidate only after the release checks recorded below pass.
 
 rc.9 added inline `我：` / `Agent：` annotation authorship. rc.8 introduced independent selected-text content annotations, the aligned sidebar, persistent Agent discussions and protected page refresh. Historical rc.1–rc.9 packages retain their exact inventories, hashes and receipts.
 
@@ -10,7 +10,7 @@ Use an explicitly selected local archive. Installation validates the closed mani
 
 ```sh
 python3 /absolute/verified-bundle/scripts/install.py \
-  --archive /absolute/web-review-kit-0.1.0-rc.12.tar.gz \
+  --archive /absolute/web-review-kit-0.1.0-rc.13.tar.gz \
   --install-root "$HOME/.local/share/web-review-kit" \
   --skill-link "$HOME/.agents/skills/web-review"
 ```
@@ -27,14 +27,14 @@ For a published version, download its exact archive from private repository `cha
 (
 set -eu
 review_download=$(mktemp -d)
-gh release download v0.1.0-rc.12 --repo charlesdguo-cell/web-review-kit \
-  --pattern 'web-review-kit-0.1.0-rc.12.tar.gz*' --dir "$review_download"
+gh release download v0.1.0-rc.13 --repo charlesdguo-cell/web-review-kit \
+  --pattern 'web-review-kit-0.1.0-rc.13.tar.gz*' --dir "$review_download"
 cd "$review_download"
-shasum -a 256 -c web-review-kit-0.1.0-rc.12.tar.gz.sha256
+shasum -a 256 -c web-review-kit-0.1.0-rc.13.tar.gz.sha256
 mkdir bundle
-tar -xzf web-review-kit-0.1.0-rc.12.tar.gz -C bundle
+tar -xzf web-review-kit-0.1.0-rc.13.tar.gz -C bundle
 python3 bundle/scripts/install.py \
-  --archive "$review_download/web-review-kit-0.1.0-rc.12.tar.gz" \
+  --archive "$review_download/web-review-kit-0.1.0-rc.13.tar.gz" \
   --install-root "$HOME/.local/share/web-review-kit" \
   --skill-link "$HOME/.agents/skills/web-review"
 )

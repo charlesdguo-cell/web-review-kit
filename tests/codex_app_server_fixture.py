@@ -90,6 +90,9 @@ while True:
         elif (root / 'distinct-threads').exists():
             thread_id = 'fixture-' + uuid.uuid4().hex
         result = {'thread': {'id': thread_id}}
+    elif method == 'thread/name/set' and (root / 'no-thread-naming').exists():
+        emit({'id': request['id'], 'error': {'code': -32601, 'message': 'Naming not supported'}})
+        continue
     elif method == 'turn/start':
         mode = (root / 'behavior').read_text() if (root / 'behavior').exists() else 'ok'
         prompt = params['input'][0]['text']

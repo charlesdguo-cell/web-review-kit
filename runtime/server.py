@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, parse_qs
 from urllib.request import urlopen
 from typing import TYPE_CHECKING
 import webbrowser
@@ -366,6 +366,18 @@ def make_server(root, data, port, base_path='', public_origins=(), bind_host='12
                 if origins:
                     return self.send(200, {'service': 'prototype-review', 'build': build_id()})
                 return self.send(200, {'service': 'prototype-review', 'root': str(root), 'data': str(data)})
+            if path == '/__review/codex/history' or path.startswith('/__review/codex/history/'):
+                if not codex_tasks:
+                    return self.send(404, {'error': '此评审入口未启用本机 Codex'})
+                try:
+                    if path == '/__review/codex/history':
+                        query = parse_qs(urlsplit(self.path).query)
+                        return self.send(200, codex_tasks.history(int(query.get('offset', ['0'])[0]),
+                                                                int(query.get('limit', ['20'])[0])))
+                    job = codex_tasks.history_job(path.removeprefix('/__review/codex/history/'))
+                    return self.send(200, {'job': job}) if job else self.send(404, {'error': '任务记录不存在'})
+                except (OSError, ValueError, TypeError):
+                    return self.send(400, {'error': '无法读取历史任务，请核对编号或分页参数'})
             if path == '/__review/codex':
                 if not codex_tasks:
                     return self.send(404, {'error': '此评审入口未启用本机 Codex'})

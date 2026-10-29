@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 
-from codex_tasks import inbox_messages, mailbox, write_json
+from codex_tasks import inbox_messages, mailbox, write_json, task_title
 
 
 class RpcError(Exception):
@@ -218,6 +218,13 @@ def run_session(directory, lock_fd, prompt_for):
             options['threadId'] = job['threadId']
         result = client.call('thread/resume' if resuming else 'thread/start', options)
         job.update(threadId=result['thread']['id'], status='running', transport='app-server')
+        if not resuming:
+            job['title'] = task_title(request)
+            try:
+                client.call('thread/name/set', {'threadId': job['threadId'], 'name': job['title']}, timeout=5)
+            except RpcError:
+                # Older CLIs may not implement naming; never fail the actual comment task.
+                print('Codex thread naming unavailable; continuing task.', file=sys.stderr)
         save()
         if not resuming and not (directory / 'cancel').exists():
             begin(prompt_for(request), first=True)

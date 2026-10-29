@@ -1,5 +1,13 @@
 # Core acceptance · 2026-10-27
 
+## rc.13 comment batch history and thread names · 2026-10-29
+
+The toolbar now provides a paginated read-only history of comment batches, saved conversations, final results and batch scope. It reads existing records, including legacy single-comment/result-only jobs, without changing `current.json`, repairing old statuses or resuming a thread. Current polling and unsent drafts remain intact while history is viewed. Annotation discussions retain their existing independent entry. Newly created Codex threads receive project/comment-number titles through `thread/name/set`; unsupported naming is nonfatal and existing titles are not rewritten.
+
+Verification: **218 tests OK in 227.633s**, including **31 Codex protocol-fixture browser checks**; separate original comment browser checks **29 passed**. Coverage includes pagination, invalid IDs, saved-file preservation, old result fallback, unavailable naming, reading history during live fixture work, escaped saved text, current draft restoration and 390px layout. Desktop/narrow screenshots were inspected. The first history fixture lacked a comment ID and counted background annotation queue-lock creation as a history write; those fixture assumptions were corrected. A browser check initially clicked an offscreen history row; its pointer helper now scrolls the row into view before clicking. Initial failed runs are retained in local execution output, not counted as passing.
+
+A fresh verified rc.13 package install passed repeat/global installation, real read-only Codex handshake/auth, HTTP bridge readiness, actual headless toolbar/comment/screenshot checks, read-only history API/UI, original history-file preservation and unchanged offline HTML. No real model task was dispatched for validation. Evidence is under ignored `artifacts/releases/0.1.0-rc.13/` and `artifacts/validation-review-codex/`.
+
 ## rc.6 headless verification default · 2026-10-27
 
 `0.1.0-rc.6` specifies headless automation in the distributed Skill, setup/comment workflows and both configured/legacy worker prompts. A different runner must verify its effective mode, including reused sessions. Visible windows are for explicit user viewing or assisted interactive steps such as login. Checks save evidence, close only their own browser sessions/temporary servers, and retain formal review services and existing user windows. Browser launch implementation and real job handling are unchanged.

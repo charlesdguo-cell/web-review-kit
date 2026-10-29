@@ -76,6 +76,59 @@ class CodexTaskTests(unittest.TestCase):
     def rpc(self):
         return [json.loads(line) for line in (self.root / 'rpc.jsonl').read_text().splitlines()]
 
+    def test_readonly_history_pagination_legacy_results_and_current_preservation(self):
+        output = self.root / 'jobs'
+        for number in range(25):
+            directory = output / ('history%03d' % number)
+            directory.mkdir()
+            job = {'id': directory.name, 'status': 'running' if number == 0 else 'completed',
+                   'startedAt': number, 'comment': {'id': 'saved%03d' % number, 'number': number, 'text': '<saved comment>'},
+                   'messages': [], 'result': ''}
+            (directory / 'status.json').write_text(json.dumps(job))
+        (output / 'history000/result.txt').write_text('Legacy saved result')
+        (output / 'annotationtask').mkdir()
+        (output / 'annotationtask/status.json').write_text(json.dumps({'kind': 'annotation'}))
+        (output / 'broken').mkdir(); (output / 'broken/status.json').write_text('{')
+        (output / 'current.json').write_text(json.dumps({'id': 'history024'}))
+        before = {str(p): p.read_bytes() for p in output.rglob('*') if p.is_file()}
+        with urlopen(self.base + '/__review/codex/history?limit=20') as response:
+            first = json.load(response)
+        self.assertEqual((first['total'], first['currentId'], first['nextOffset']), (25, 'history024', 20))
+        self.assertEqual(len(first['jobs']), 20)
+        self.assertEqual(first['jobs'][0]['comments'][0]['number'], 24)
+        with urlopen(self.base + '/__review/codex/history?offset=20') as response:
+            last = json.load(response)
+        self.assertEqual(len(last['jobs']), 5); self.assertIsNone(last['nextOffset'])
+        with urlopen(self.base + '/__review/codex/history/history000') as response:
+            saved = json.load(response)['job']
+        self.assertEqual(saved['result'], 'Legacy saved result')
+        self.assertEqual(saved['status'], 'running')  # Reading history must not repair old statuses.
+        self.assertTrue(saved['readOnly']); self.assertFalse(saved['canChat'])
+        # The server's independent annotation dispatcher may create its queue locks.
+        # Every original history/current/result file must retain its exact bytes.
+        self.assertEqual({name: Path(name).read_bytes() for name in before}, before)
+        self.assertFalse((self.root / 'rpc.jsonl').exists())
+        for suffix in ['?limit=0', '?offset=-1', '?offset=x', '/..', '/missing', '/annotationtask']:
+            with self.subTest(suffix=suffix), self.assertRaises(HTTPError) as raised:
+                urlopen(self.base + '/__review/codex/history' + suffix)
+            self.assertIn(raised.exception.code, (400, 404))
+
+    def test_new_thread_gets_a_comment_title(self):
+        self.tasks.start([self.comment], self.base)
+        job = self.wait_done()
+        naming = [call for call in self.rpc() if call.get('method') == 'thread/name/set']
+        self.assertEqual(len(naming), 1)
+        self.assertEqual(naming[0]['params'], {'threadId': job['threadId'],
+                                             'name': self.root.name + ' · 评论 #1'})
+        self.assertEqual(job['title'], naming[0]['params']['name'])
+
+    def test_unsupported_naming_does_not_fail_comment_processing(self):
+        (self.root / 'no-thread-naming').touch()
+        self.tasks.start([self.comment], self.base)
+        job = self.wait_done()
+        self.assertEqual(job['status'], 'completed')
+        self.assertTrue(job['title'].endswith('评论 #1'))
+
     def test_external_project_execution_context(self):
         skill = self.root / 'test-skill' / 'SKILL.md'
         skill.parent.mkdir(); skill.write_text('---\nname: web-review\ndescription: test\n---\nDirect worker only.')

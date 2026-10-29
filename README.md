@@ -49,6 +49,14 @@ Freeze the individual successful `show` envelope before edits, inspect its scree
 
 An already dispatched worker consumes its frozen batch and executionConfig directly. The helper's `--request /absolute/job/request.json snapshot --id comment-ID --output /absolute/new/frozen.json` extracts one original record exclusively; the whole request is not a valid mark-changed snapshot. Every helper data command with `--request` targets the frozen request.reviewUrl even if current server configuration changes. Raw CLI data commands also accept global `--review-url URL`; ReviewClient verifies that endpoint's projectId before access. Other agents can use these public CLI/API operations in their current conversation; webpage activation is only promised for local Codex.
 
+## Comment task history
+
+The toolbar's **历史批次** button opens comment batches newest first, with 20 batches per page. Each entry shows its project/comment numbers, start time and saved status. Select a batch to read its saved conversation, final result and comment scope; old single-comment/result-only records remain readable. The history view is read-only and does not alter `current.json`, resume a thread or expose send/stop/retry controls. Return to the current task to continue its conversation; the unsent draft remains intact. Content annotations keep their existing independent discussion view.
+
+Local enabled services expose `GET /__review/codex/history?offset=0&limit=20` and `GET /__review/codex/history/JOB_ID`. The list returns `jobs`, `total`, `nextOffset` and `currentId`; detail returns `{job}`. Shared/disabled services do not expose these routes. Reads use saved status/messages/inbox/result files, not the Codex model or raw event logs. Saved statuses describe the recorded batch; reading history does not repair stale historical state.
+
+New Codex threads are named `project · 评论 #281、#282` (content annotation threads use a short annotation subject). Naming failure on an older CLI does not block processing. Existing threads keep their titles and recorded IDs; persistence and same-thread continuation remain enabled.
+
 ## Shared and offline review
 
 For HTTPS sharing behind a proxy that preserves Host/path, configure `server.host=0.0.0.0`, an explicit basePath and HTTPS publicOrigins through setup/configuration, then serve. Shared mode disables Codex and does not expose local filesystem paths in public health. It is retained and tested through isolated local sharing; deployment is a separate task.

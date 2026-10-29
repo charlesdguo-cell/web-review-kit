@@ -5,7 +5,7 @@ b=PrototypeBrowser.new;c=b.cdp;checks=[]
 ui="document.querySelector('#prototype-review').shadowRoot"
 check=lambda{|name,expr|raise name unless c.evaluate(expr);checks<<name;puts 'PASS '+name}
 click=lambda do |selector|
- xy=c.evaluate("(()=>{const el=#{ui}.querySelector(#{selector.to_json});if(!el)throw Error('Missing review control '+#{selector.to_json});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()")
+ xy=c.evaluate("(()=>{const el=#{ui}.querySelector(#{selector.to_json});if(!el)throw Error('Missing review control '+#{selector.to_json});el.scrollIntoView({block:'nearest'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()")
  c.call('Input.dispatchMouseEvent',type:'mousePressed',x:xy['x'],y:xy['y'],button:'left',clickCount:1)
  c.call('Input.dispatchMouseEvent',type:'mouseReleased',x:xy['x'],y:xy['y'],button:'left',clickCount:1)
 end
@@ -68,6 +68,21 @@ begin
  check.call('评论列表与任务对话互斥',"!#{ui}.querySelector('.codex-task')&&!!#{ui}.querySelector('.comments')")
  open_panel.call
  check.call('重新展开保留未发送的文字',"#{ui}.querySelector('#codex-input').value==='还未发送的补充要求'")
+ click.call('[data-action=codex-history]')
+ c.wait_for("#{ui}.querySelectorAll('.codex-history-row').length===20")
+ check.call('历史批次分页可读，当前进度仍显示',"#{ui}.querySelector('.codex-history-pages').textContent.includes('26')&&#{ui}.querySelector('.codex-launch.running')!==null")
+ click.call('[data-action=codex-history][data-offset="20"]')
+ c.wait_for("!!#{ui}.querySelector('[data-job-id=history000]')")
+ click.call('[data-job-id=history000]')
+ c.wait_for("#{ui}.querySelector('[aria-label=历史任务对话]')?.textContent.includes('Legacy batch result')")
+ check.call('可读取旧版结果，历史视图没有发送停止重试入口且内容转义',"!#{ui}.querySelector('#codex-input')&&!#{ui}.querySelector('[data-action=codex-stop]')&&!#{ui}.querySelector('[data-action=codex-retry]')&&!window.historyInjected")
+ c.evaluate("window.savedHistoryView=#{ui}.querySelector('[data-history]')")
+ sleep 1.7
+ check.call('实时轮询不打断历史阅读，也不切换当前任务',"#{ui}.querySelector('[data-history]')===window.savedHistoryView&&fetch('/__review/codex').then(r=>r.json()).then(d=>d.job.id===#{job_before.to_json})")
+ b.screenshot(File.join(out,'history-desktop.png'))
+ click.call('[data-action=codex-details]')
+ c.wait_for("!!#{ui}.querySelector('#codex-input')")
+ check.call('返回当前任务恢复未发送草稿',"#{ui}.querySelector('#codex-input').value==='还未发送的补充要求'")
  file=File.join(fixture,'data/comments.json');reviews=JSON.parse(File.read(file))
  reviews[0].merge!('status'=>'changed','updatedAt'=>'finished-old')
  reviews<<reviews[0].merge('id'=>'fixture-comment-004','number'=>4,'status'=>'open','text'=>'运行期间新增，留到下一批','updatedAt'=>'new-four')
@@ -114,6 +129,12 @@ begin
  c.wait_for("(()=>{const a=#{ui}.querySelector('.bar').getBoundingClientRect(),b=#{ui}.querySelector('#codex-panel').getBoundingClientRect();return b.bottom<=a.top&&b.left>=0&&b.right<=innerWidth&&b.top>=0})()")
  check.call('窄屏对话与工具栏不重叠，发送区可见',"(()=>{const a=#{ui}.querySelector('[data-action=codex-send]').getBoundingClientRect();return a.top>0&&a.bottom<innerHeight})()")
  b.screenshot(File.join(out,'mobile-result.png'))
+ click.call('[data-action=codex-history]')
+ c.wait_for("!!#{ui}.querySelector('.codex-history-row')")
+ check.call('窄屏历史批次可浏览且不溢出',"(()=>{const r=#{ui}.querySelector('[data-history]').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight})()")
+ b.screenshot(File.join(out,'history-mobile.png'))
+ click.call('[data-action=codex-details]')
+ c.wait_for("!!#{ui}.querySelector('#codex-input')")
  c.evaluate("#{ui}.querySelector('#codex-input').focus()")
  c.call('Input.dispatchKeyEvent',type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27)
  c.call('Input.dispatchKeyEvent',type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27)

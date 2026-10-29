@@ -24,6 +24,17 @@ def job_comments(job):
     return job.get('comments') or ([job['comment']] if job.get('comment') else [])
 
 
+def task_title(request):
+    project = (request.get('executionConfig') or {}).get('projectId') or Path(request['project']).name
+    if request.get('kind') == 'annotation':
+        annotation = request.get('annotation') or {}
+        subject = str(annotation.get('selectedText') or annotation.get('text') or '内容讨论')[:36]
+        return f'{project} · 内容批注 · {subject}'
+    comments = job_comments(request)
+    numbers = '、'.join('#' + str(item.get('number', '?')) for item in comments[:5])
+    return f'{project} · 评论 {numbers}' + (f' 等 {len(comments)} 条' if len(comments) > 5 else '')
+
+
 def batch_key(comments):
     return sorted((c['id'], c['updatedAt']) for c in comments)
 
@@ -158,6 +169,57 @@ class CodexTasks(AnnotationTasksMixin):
         return {'available': bool(self.executable and os.access(self.executable, os.X_OK)),
                 'reason': '' if self.executable and os.access(self.executable, os.X_OK) else '未检测到本机 Codex，请安装或在启动服务时指定 --codex-bin。',
                 'job': self.current()}
+
+    def history_job(self, identity, detail=True):
+        """Read a saved batch without resuming, repairing status, or changing current.json."""
+        if not isinstance(identity, str) or not identity.isascii() or not identity.isalnum() or len(identity) > 80:
+            raise ValueError('任务编号无效')
+        directory = self.output / identity
+        path = directory / 'status.json'
+        if directory.is_symlink() or path.is_symlink():
+            raise ValueError('任务记录不存在')
+        try:
+            job = json.loads(path.read_text())
+        except FileNotFoundError:
+            return None
+        if not isinstance(job, dict) or job.get('kind') == 'annotation':
+            return None
+        job = copy.deepcopy(job)
+        job['id'] = identity
+        job['title'] = job.get('title') or task_title({'project': str(self.project), **job})
+        job['comments'] = job_comments(job)
+        if not detail:
+            return job
+        if not job.get('result'):
+            result = directory / 'result.txt'
+            if result.is_file() and not result.is_symlink():
+                job['result'] = result.read_text()
+        messages = job.get('messages') or []
+        job['messages'] = sorted(messages + inbox_messages(directory),
+                                 key=lambda item: (item.get('createdAt', 0), item.get('id', '')))
+        job['readOnly'] = True
+        job['canChat'] = False
+        return job
+
+    def history(self, offset=0, limit=20):
+        if not 0 <= offset or not 1 <= limit <= 100:
+            raise ValueError('历史分页参数无效')
+        jobs = []
+        for path in self.output.glob('*/status.json'):
+            try:
+                job = self.history_job(path.parent.name, detail=False)
+                if job is not None:
+                    jobs.append({key: job.get(key) for key in
+                                 ('id', 'title', 'status', 'startedAt', 'finishedAt', 'comments')})
+            except (OSError, ValueError, TypeError):
+                continue
+        jobs.sort(key=lambda job: (job.get('startedAt') or 0, job['id']), reverse=True)
+        try:
+            current = json.loads((self.output / 'current.json').read_text()).get('id')
+        except (OSError, ValueError, AttributeError):
+            current = None
+        return {'jobs': jobs[offset:offset + limit], 'total': len(jobs), 'currentId': current,
+                'nextOffset': offset + limit if offset + limit < len(jobs) else None}
 
     def _worker_path(self, directory):
         worker_path = Path(__file__).resolve()
