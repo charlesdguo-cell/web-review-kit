@@ -1,6 +1,6 @@
 # Global installation and optional project pins
 
-Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. This checkout is the local **`0.1.0-rc.12`** candidate. It prevents unstyled review controls from appearing before their stylesheet loads; a stylesheet failure leaves the review UI hidden and the page usable. It retains rc.11's global runtime selection and default installer activation. Existing releases remain immutable. rc.12 has not been remotely published by this change; verify remote availability through the exact GitHub release rather than inferring publication from a local VERSION file.
+Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. The published prerelease is **[`0.1.0-rc.12`](https://github.com/charlesdguo-cell/web-review-kit/releases/tag/v0.1.0-rc.12)**. It prevents unstyled review controls from appearing before their stylesheet loads; a stylesheet failure leaves the review UI hidden and the page usable. It retains rc.11's global runtime selection and default installer activation. Existing releases remain immutable. Published from commit `4648439` on `feat/portable-review`; tag `v0.1.0-rc.12`. The downloaded archive, checksum and manifest match the verified source package.
 
 rc.9 added inline `我：` / `Agent：` annotation authorship. rc.8 introduced independent selected-text content annotations, the aligned sidebar, persistent Agent discussions and protected page refresh. Historical rc.1–rc.9 packages retain their exact inventories, hashes and receipts.
 
@@ -21,20 +21,20 @@ Use `--no-activate-global` to install a release without changing `current` (for 
 
 This operation never edits a consumer configuration or review record, restarts services, or starts jobs. Global agent settings are not modified. Each running service/task continues with its concrete startup release; newly invoked commands and restarted services use the new default. Keep previous releases installed while their services or frozen tasks still need them.
 
-For a published version, download its exact archive from private repository `charlesdguo-cell/web-review-kit` using the host's existing `gh` login, verify the accompanying SHA-256 file, and use that archive's installer. The example below explicitly retrieves the preceding rc.11 release, not the local rc.12 candidate. Older installers do not provide the new default. No credentials are bundled.
+For a published version, download its exact archive from private repository `charlesdguo-cell/web-review-kit` using the host's existing `gh` login, verify the accompanying SHA-256 file, and use that archive's installer. The example below retrieves the published rc.12 release. Older installers do not provide the new default. No credentials are bundled.
 
 ```sh
 (
 set -eu
 review_download=$(mktemp -d)
-gh release download v0.1.0-rc.11 --repo charlesdguo-cell/web-review-kit \
-  --pattern 'web-review-kit-0.1.0-rc.11.tar.gz*' --dir "$review_download"
+gh release download v0.1.0-rc.12 --repo charlesdguo-cell/web-review-kit \
+  --pattern 'web-review-kit-0.1.0-rc.12.tar.gz*' --dir "$review_download"
 cd "$review_download"
-shasum -a 256 -c web-review-kit-0.1.0-rc.11.tar.gz.sha256
+shasum -a 256 -c web-review-kit-0.1.0-rc.12.tar.gz.sha256
 mkdir bundle
-tar -xzf web-review-kit-0.1.0-rc.11.tar.gz -C bundle
+tar -xzf web-review-kit-0.1.0-rc.12.tar.gz -C bundle
 python3 bundle/scripts/install.py \
-  --archive "$review_download/web-review-kit-0.1.0-rc.11.tar.gz" \
+  --archive "$review_download/web-review-kit-0.1.0-rc.12.tar.gz" \
   --install-root "$HOME/.local/share/web-review-kit" \
   --skill-link "$HOME/.agents/skills/web-review"
 )
@@ -80,3 +80,7 @@ The older per-project `update`/`rollback` commands remain experimental. They req
 Use `python3 scripts/package.py --destination /absolute/output`; VERSION is the only version input. The deterministic closed manifest covers runtime/Skill files, hashes, schema/workflow contracts, browser export v2 and the unchanged html2canvas dependency/license/patch. Use the new bundle's installer for global activation; old installers do not implement this option.
 
 Run the independent Python discovery and relevant isolated headless browser suites from README. Global-selection tests use temporary installations, synthetic projects and frozen requests; they do not modify real review data or launch real Codex jobs. Local checks do not establish real-model behavior, remote publication, deployment or user acceptance.
+
+## rc.12 publication evidence (2026-10-29)
+
+215 independent discovery tests passed in 220.692 seconds, plus 29 review, 13 attachment and 9 shared browser checks. Two packages were byte-identical; SHA-256 `2af3d140d98b03eeb9e8e7ea0608653353c316b0dfef696d7eaf502615fed541`. The release download matched all three uploaded assets and its bundled installer passed a fresh isolated installation. The installed local rc.12 manifest matches this source package. Evidence: `artifacts/release-rc12/`. No real Codex task or formal review data was used. Morsea server adoption is recorded separately in that repository.
