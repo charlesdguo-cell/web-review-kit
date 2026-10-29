@@ -59,9 +59,18 @@
     const host = document.createElement('div');
     host.id = 'prototype-review';
     host.dataset.html2canvasIgnore = 'true';
-    host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+    host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;visibility:hidden;';
     const ui = host.attachShadow({mode: 'open'});
     ui.innerHTML = `<link rel="stylesheet" href="${new URL('review.css', assets)}"><div id="toolbar"></div><div id="outline"></div><div id="markers"></div><div id="editor"></div><div id="list"></div><div id="codex-panel"></div><div id="annotation-highlights"></div><div id="annotation-selection"></div><div id="annotation-panel"></div><div id="notice" role="status" aria-live="polite"></div>`;
+    // Shadow-root styles load asynchronously. Keep controls hidden until their
+    // layout is available, including on failure; register before connecting the
+    // host so a cached stylesheet cannot finish before this listener is attached.
+    let stylesLoaded=false;
+    const stylesReady=new Promise(resolve=>{
+      const link=ui.querySelector('link');
+      link.addEventListener('load',()=>{stylesLoaded=true;host.style.removeProperty('visibility');renderAnnotations();drawAnnotations();resolve(true);},{once:true});
+      link.addEventListener('error',()=>resolve(false),{once:true});
+    });
     document.documentElement.append(host);
     const pageStyle = document.createElement('style');
     pageStyle.textContent = 'html[data-prototype-review-active] body *{cursor:crosshair!important}html[data-prototype-review-active] svg path,html[data-prototype-review-active] svg line,html[data-prototype-review-active] svg polyline{pointer-events:visiblePainted!important}';
@@ -120,11 +129,11 @@
     async function restoreAnnotationView(){
       if(ann.viewReady)return;
       if(ann.restoringView)return ann.restoringView;
-      const saved=savedAnnotationView,epoch=ann.viewEpoch;savedAnnotationView=null;
+      const epoch=ann.viewEpoch;
       const restoring=(async()=>{
+      if(!await stylesReady||epoch!==ann.viewEpoch)return;
+      const saved=savedAnnotationView;savedAnnotationView=null;
       if(saved){
-        const link=ui.querySelector('link');
-        if(!link.sheet)await new Promise(resolve=>{link.addEventListener('load',resolve,{once:true});link.addEventListener('error',resolve,{once:true});setTimeout(resolve,1000);});
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         if(epoch!==ann.viewEpoch)return;
         syncAnnotationLayout();renderAnnotations();drawAnnotations();
@@ -134,7 +143,8 @@
         if(reading&&Number.isFinite(saved.reading.top))annotationScrollBy(reading.getBoundingClientRect().top-saved.reading.top);
         drawAnnotations();
         const sidebar=ui.querySelector('.annotation-sidebar');if(sidebar&&ann.layout==='drawer')sidebar.scrollTop=number(saved.drawerScrollTop);
-        const field=saved.focus&&$(saved.focus.id);if(field?.value){field.focus({preventScroll:true});field.setSelectionRange(number(saved.focus.start),number(saved.focus.end));}
+        const field=saved.focus&&$(saved.focus.id),active=document.activeElement;
+        if(field?.value&&(!active||[document.body,document.documentElement,host].includes(active))){field.focus({preventScroll:true});field.setSelectionRange(number(saved.focus.start),number(saved.focus.end));}
       }
       if(epoch===ann.viewEpoch){ann.viewReady=true;saveAnnotationView();}
       })();
@@ -244,6 +254,7 @@
     function readingPosition(){const x=Math.min(120,innerWidth/4),y=Math.min(100,innerHeight/4),el=document.elementFromPoint(x,y);if(!el||el.contains(host))return null;const caret=document.caretRangeFromPoint?.(x,y);if(caret&&caret.startContainer.nodeType===Node.TEXT_NODE){const range=caret.cloneRange();if(range.startOffset<range.startContainer.length)range.setEnd(range.startContainer,range.startOffset+1);return {range,top:range.getBoundingClientRect().top};}return {el,top:el.getBoundingClientRect().top};}
     function restoreReading(pos){if(pos?.range?.startContainer.isConnected)annotationScrollBy(pos.range.getBoundingClientRect().top-pos.top);else if(pos?.el?.isConnected)annotationScrollBy(pos.el.getBoundingClientRect().top-pos.top);}
     function syncAnnotationLayout(){
+      if(!stylesLoaded)return;
       if(!ann.open){if(ann.reserve){const pos=readingPosition();if(ann.reserve.styleAttribute===null)ann.reserve.el.removeAttribute('style');else ann.reserve.el.setAttribute('style',ann.reserve.styleAttribute);ann.reserve=null;ann.tail?.remove();ann.tail=null;restoreReading(pos);}return;}
       const explicit=query(script.dataset.annotationRoot),scroll=annotationScrollRoot(),body=document.body;
       const fixed=[...body.children].some(el=>el!==host&&el!==ann.tail&&getComputedStyle(el).position==='fixed'&&el.getBoundingClientRect().width>innerWidth*.7);
@@ -330,6 +341,7 @@
       return menus.length>0;
     }
     function renderAnnotations(){
+      if(!stylesLoaded)return;
       const panel=$('annotation-panel');if(!ann.open){syncAnnotationLayout();panel.innerHTML='';saveAnnotationView();return;}syncAnnotationLayout();
       if(!panel.firstElementChild){panel.innerHTML='<section class="annotation-sidebar" aria-label="页面内容批注"><header><strong id="annotation-title"></strong><nav aria-label="批注导航"><button data-action="annotation-prev" aria-label="上一条批注">↑</button><button data-action="annotation-next" aria-label="下一条批注">↓</button><details class="annotation-menu"><summary aria-label="更多批注选项">···</summary><div><button data-action="annotation-filter" data-filter="open">未解决</button><button data-action="annotation-filter" data-filter="all">全部</button><button data-action="annotation-filter" data-filter="resolved">已解决</button><button data-action="annotation-export">导出批注</button><button data-action="annotation-refresh">重新同步</button></div></details><button data-action="annotation-reload" aria-label="刷新页面内容" title="内容已更新；保留当前输入，保存后自动刷新" hidden>更新</button><button data-action="annotation-close" aria-label="收起内容批注">×</button></nav></header><div class="annotation-drawer-back"><button data-action="annotation-return">← 返回原文</button><span id="annotation-drawer-quote"></span></div><div id="annotation-empty"></div><div id="annotation-cards"></div><div id="annotation-error" class="error" role="alert"></div></section>';}
       panel.firstElementChild.dataset.layout=ann.layout;

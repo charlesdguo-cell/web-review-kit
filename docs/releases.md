@@ -1,6 +1,6 @@
 # Global installation and optional project pins
 
-Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. This release is **`0.1.0-rc.11`**. It adds one global runtime default and activates it by default during installation. The preceding rc.10 was a local candidate; it is retained unchanged on machines that installed it. Verify remote availability through the exact GitHub release rather than inferring publication from a local VERSION file.
+Use Python 3.9+ on macOS and the installation root **`~/.local/share/web-review-kit`**. This checkout is the local **`0.1.0-rc.12`** candidate. It prevents unstyled review controls from appearing before their stylesheet loads; a stylesheet failure leaves the review UI hidden and the page usable. It retains rc.11's global runtime selection and default installer activation. Existing releases remain immutable. rc.12 has not been remotely published by this change; verify remote availability through the exact GitHub release rather than inferring publication from a local VERSION file.
 
 rc.9 added inline `我：` / `Agent：` annotation authorship. rc.8 introduced independent selected-text content annotations, the aligned sidebar, persistent Agent discussions and protected page refresh. Historical rc.1–rc.9 packages retain their exact inventories, hashes and receipts.
 
@@ -10,7 +10,7 @@ Use an explicitly selected local archive. Installation validates the closed mani
 
 ```sh
 python3 /absolute/verified-bundle/scripts/install.py \
-  --archive /absolute/web-review-kit-0.1.0-rc.11.tar.gz \
+  --archive /absolute/web-review-kit-0.1.0-rc.12.tar.gz \
   --install-root "$HOME/.local/share/web-review-kit" \
   --skill-link "$HOME/.agents/skills/web-review"
 ```
@@ -21,7 +21,7 @@ Use `--no-activate-global` to install a release without changing `current` (for 
 
 This operation never edits a consumer configuration or review record, restarts services, or starts jobs. Global agent settings are not modified. Each running service/task continues with its concrete startup release; newly invoked commands and restarted services use the new default. Keep previous releases installed while their services or frozen tasks still need them.
 
-Download the exact version from private repository `charlesdguo-cell/web-review-kit` using the host's existing `gh` login, verify the accompanying SHA-256 file, and use that archive's installer. Older installers do not provide the new default. No credentials are bundled.
+For a published version, download its exact archive from private repository `charlesdguo-cell/web-review-kit` using the host's existing `gh` login, verify the accompanying SHA-256 file, and use that archive's installer. The example below explicitly retrieves the preceding rc.11 release, not the local rc.12 candidate. Older installers do not provide the new default. No credentials are bundled.
 
 ```sh
 (

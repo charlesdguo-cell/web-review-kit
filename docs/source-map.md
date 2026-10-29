@@ -1,5 +1,11 @@
 # Extraction source map
 
+## 2026-10-29 review stylesheet startup
+
+The user authorized a fix for review controls briefly appearing at the top left during page navigation or refresh. `runtime/review.js` now keeps its host hidden until the Shadow DOM stylesheet's load event. The listener is registered before the host is connected, covering cached loads; failure keeps unstyled controls hidden. Annotation layout and saved-view restoration wait for the same readiness signal, preserving the saved view after failure and avoiding an empty sidebar reserve or lost draft focus. A page input used during loading retains focus. Early event capture, comments, annotations and screenshots retain their existing APIs. Synthetic delayed, failed and cached stylesheet checks live in `tests/test_review_startup_browser.py` and `tests/browser/verify-review-startup.rb`; they use temporary pages and isolated headless Chrome, without consumer data or real Agent tasks.
+
+The change is prepared as local candidate rc.12 so installed rc.10/rc.11 bytes remain immutable. Packaging does not itself activate a global release, restart a consumer, or publish remotely. Consumer adoption and its evidence are separate from this toolkit source change.
+
 ## 2026-10-29 default activation and rc.11 release
 
 The user subsequently authorized default global activation on installation and publication of a new version. rc.11 carries the global-runtime implementation below plus the installer's default activation and explicit `--no-activate-global` opt-out. `--activate-global` remains supported, discovery still requires an explicit `--skill-link`, and project configuration/data are preserved. The rc.10 local package remains immutable. See the [release plan](superpowers/plans/2026-10-29-rc11-release.md); the earlier local-only scope described below records the preceding task, not this publication authorization.

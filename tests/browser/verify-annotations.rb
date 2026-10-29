@@ -24,7 +24,7 @@ key = lambda do |name, modifiers = 0|
 end
 ready = lambda do
   c.wait_for("!!window.PrototypeReview&&!!#{ui}.querySelector('[data-action=annotations]')")
-  c.wait_for("!!#{ui}.querySelector('link').sheet")
+  c.wait_for("(()=>{const style=getComputedStyle(#{ui}.querySelector('#toolbar'));return style.visibility==='visible'&&style.position==='fixed';})()")
 end
 select = lambda do |selector, start, finish, reverse = false|
   c.evaluate(<<~JS)
@@ -149,8 +149,8 @@ begin
   before = rpc.call('turn/start')
   c.call('Page.reload')
   ready.call
-  click.call('[data-action=annotations]') unless c.evaluate("!!#{ui}.querySelector('.annotation-card')")
-  c.wait_for("!!#{ui}.querySelector('[data-action=annotation-open][data-id=\"#{first_id}\"]')")
+  click.call('[data-action=annotations]') unless c.evaluate("#{ui}.querySelector('[data-action=annotations]').getAttribute('aria-expanded')==='true'")
+  c.wait_for("!!#{ui}.querySelector('.annotation-card [data-action=annotation-open][data-id=\"#{first_id}\"]')")
   click.call(".annotation-card [data-action=annotation-open][data-id='#{first_id}']")
   c.wait_for("!!#{ui}.querySelector('#annotation-followup')")
   check.call('Refresh restores conversation and unsent draft', "#{ui}.querySelector('#annotation-followup').value==='Unsent draft survives progress polling.'&&#{ui}.querySelector('.annotation-card:has(#annotation-followup)').textContent.includes('Explain this synthetic selection.')")
